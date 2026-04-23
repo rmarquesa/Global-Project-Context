@@ -1,0 +1,2 @@
+"""Global Project Context package."""
+

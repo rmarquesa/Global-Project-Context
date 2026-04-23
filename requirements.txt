@@ -1,0 +1,7 @@
+gitpython
+mcp
+neo4j
+psycopg
+python-dotenv
+qdrant-client
+tiktoken

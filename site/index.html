@@ -1,0 +1,309 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>GPC - Persistent local context for AI coding tools</title>
+    <meta
+      name="description"
+      content="Open-source MCP server that indexes your repositories in Postgres, Qdrant and Ollama, so Codex, Claude, Gemini and Copilot share the same project context across sessions."
+    />
+    <meta name="author" content="Rodrigo Alves" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header class="topbar" aria-label="Primary navigation">
+      <a class="brand" href="#top" aria-label="Global Project Context home">Global Project Context</a>
+      <nav>
+        <a href="#value">Why</a>
+        <a href="#memory">Pipeline</a>
+        <a href="#access">Tools</a>
+        <a href="#graphify">Graphify</a>
+        <a href="#tokens">Tokens</a>
+        <a href="https://github.com/rmarquesa/Global-Project-Context" target="_blank" rel="noreferrer">GitHub</a>
+      </nav>
+    </header>
+
+    <main id="top">
+      <section class="hero" aria-labelledby="hero-title">
+        <canvas id="memoryGraph" aria-hidden="true"></canvas>
+        <div class="hero__shade"></div>
+        <div class="hero__content">
+          <p class="kicker">Open-source MCP server</p>
+          <h1 id="hero-title">Global Project Context</h1>
+          <p class="hero__lead">
+            Persistent project context for Codex, Claude, Gemini, OpenClaw and
+            Copilot — indexed locally, retrieved on demand.
+          </p>
+          <p class="hero__plain">
+            GPC chunks your repositories into Postgres, embeds them with Ollama,
+            stores vectors in Qdrant, and serves a bounded slice over MCP.
+            Git hooks keep the index in sync after every commit.
+          </p>
+          <div class="hero__actions" aria-label="Primary actions">
+            <a class="button" href="https://github.com/rmarquesa/Global-Project-Context#quickstart" target="_blank" rel="noreferrer">Quickstart</a>
+            <a class="button button--ghost" href="https://github.com/rmarquesa/Global-Project-Context" target="_blank" rel="noreferrer">GitHub</a>
+            <a class="link" href="#memory">How it works</a>
+          </div>
+        </div>
+      </section>
+
+      <section id="value" class="section installIntro" aria-labelledby="value-title">
+        <div class="section__intro">
+          <p class="kicker">Why it matters</p>
+          <h2 id="value-title">AI coding tools stop relearning your codebase every session.</h2>
+        </div>
+        <div class="valueGrid">
+          <p>
+            Most assistants forget the project the moment a chat ends. GPC keeps
+            an indexed, retrievable view of your repositories outside the chat —
+            so the next session starts with context, not silence.
+          </p>
+          <ul class="valueList">
+            <li><strong>Less pasting</strong><span>Stop dropping files and architecture explanations into every prompt.</span></li>
+            <li><strong>One index, many tools</strong><span>Codex, Claude, Copilot and Gemini all read the same indexed project through MCP.</span></li>
+            <li><strong>Survives sessions and branches</strong><span>Git hooks reindex after every commit, merge and checkout, so retrieval reflects the current code.</span></li>
+            <li><strong>Stays on your machine</strong><span>Embeddings run locally with Ollama. Project text never leaves the box.</span></li>
+          </ul>
+        </div>
+      </section>
+
+      <section id="memory" class="section automation" aria-labelledby="memory-title">
+        <div class="section__intro">
+          <p class="kicker">Indexing pipeline</p>
+          <h2 id="memory-title">From repository to retrievable context, fully local.</h2>
+        </div>
+        <div class="automationGrid memoryGrid">
+          <p class="memoryLead">
+            GPC separates four jobs: index, embed, store, retrieve. Each one
+            runs against local services, so the project never has to be pasted
+            into a prompt to be understood.
+          </p>
+          <ol class="timeline">
+            <li>
+              <span>01</span>
+              <strong>Index</strong>
+              <p><code>gpc init</code> chunks files and writes them to Postgres. Git hooks rerun the indexer after every commit, merge and checkout.</p>
+            </li>
+            <li>
+              <span>02</span>
+              <strong>Embed</strong>
+              <p>Ollama generates vectors locally with <code>nomic-embed-text</code>. No code is sent to a remote embedding API.</p>
+            </li>
+            <li>
+              <span>03</span>
+              <strong>Store</strong>
+              <p>Postgres holds canonical state — projects, files, chunks, hashes, runs. Qdrant holds the vectors that point back to it.</p>
+            </li>
+            <li>
+              <span>04</span>
+              <strong>Retrieve</strong>
+              <p>AI clients call the MCP server. It embeds the query, searches Qdrant, hydrates chunks from Postgres and returns a bounded context block.</p>
+            </li>
+          </ol>
+        </div>
+      </section>
+
+      <section id="access" class="section mcp" aria-labelledby="access-title">
+        <div class="section__intro">
+          <p class="kicker">MCP integration</p>
+          <h2 id="access-title">One indexed project. Every supported AI tool.</h2>
+        </div>
+        <div class="mcpFlow" aria-label="GPC MCP flow">
+          <div class="mcpFlow__group">
+            <div class="toolItem">
+              <img class="brandIcon" src="https://cdn.jsdelivr.net/npm/simple-icons@latest/icons/openai.svg" alt="" loading="lazy" />
+              <span>Codex</span>
+            </div>
+            <div class="toolItem">
+              <img class="brandIcon" src="https://cdn.jsdelivr.net/npm/simple-icons@latest/icons/anthropic.svg" alt="" loading="lazy" />
+              <span>Claude</span>
+            </div>
+            <div class="toolItem">
+              <img class="brandIcon" src="https://cdn.jsdelivr.net/npm/simple-icons@latest/icons/githubcopilot.svg" alt="" loading="lazy" />
+              <span>Copilot</span>
+            </div>
+            <div class="toolItem">
+              <img class="brandIcon" src="https://cdn.jsdelivr.net/npm/simple-icons@latest/icons/googlegemini.svg" alt="" loading="lazy" />
+              <span>Gemini</span>
+            </div>
+          </div>
+          <div class="mcpFlow__line" aria-hidden="true"></div>
+          <div class="mcpFlow__core">
+            <strong>GPC MCP server</strong>
+            <small>read-only access to chunks, vectors and the Graphify graph</small>
+          </div>
+          <div class="mcpFlow__line" aria-hidden="true"></div>
+          <div class="mcpFlow__group">
+            <div class="toolItem">
+              <img class="brandIcon" src="https://cdn.jsdelivr.net/npm/simple-icons@latest/icons/postgresql.svg" alt="" loading="lazy" />
+              <span>Postgres</span>
+            </div>
+            <div class="toolItem">
+              <img class="brandIcon" src="https://cdn.jsdelivr.net/npm/simple-icons@latest/icons/qdrant.svg" alt="" loading="lazy" />
+              <span>Qdrant</span>
+            </div>
+            <div class="toolItem">
+              <img class="brandIcon" src="https://cdn.jsdelivr.net/npm/simple-icons@latest/icons/ollama.svg" alt="" loading="lazy" />
+              <span>Ollama</span>
+            </div>
+            <div class="toolItem">
+              <img class="brandIcon" src="https://cdn.jsdelivr.net/npm/simple-icons@latest/icons/neo4j.svg" alt="" loading="lazy" />
+              <span>Neo4j</span>
+            </div>
+            <div class="toolItem">
+              <span class="brandIcon brandIcon--text" aria-hidden="true">G</span>
+              <span>Graphify</span>
+            </div>
+          </div>
+        </div>
+        <p class="mcp__note">
+          GPC is not another assistant. It's a local MCP server that exposes
+          the same indexed project — code chunks plus the Graphify relationship
+          graph — to whichever AI tools you already use.
+        </p>
+      </section>
+
+      <section id="graphify" class="section graphifySection" aria-labelledby="graphify-title">
+        <div class="section__intro">
+          <p class="kicker">Graphify + Neo4j</p>
+          <h2 id="graphify-title">Beyond text search: a navigable map of your system.</h2>
+        </div>
+        <div class="graphifyLayout">
+          <div class="graphifyModel" aria-label="Graphify consolidation model">
+            <div>
+              <span>Project</span>
+              <strong>commerce</strong>
+            </div>
+            <div>
+              <span>Repos</span>
+              <strong>api · workers · web</strong>
+            </div>
+            <div>
+              <span>Neo4j</span>
+              <strong>consolidated by slug</strong>
+            </div>
+          </div>
+          <div class="graphifyCopy">
+            <p>
+              Graphify is a separate indexer that extracts the relationship
+              graph of a repository — what calls what, what depends on what.
+              GPC consolidates those graphs in Neo4j by
+              <code>project_slug</code> and <code>repo_slug</code>, so a
+              multi-repo product becomes one navigable system map.
+            </p>
+            <p>
+              Most AI tools read files. Graphify maps relationships. Together
+              they answer questions like <em>which worker calls which
+              service</em> or <em>which modules touch the same database
+              tables</em>, instead of just returning matching text.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section id="tokens" class="section tokens" aria-labelledby="tokens-title">
+        <div class="section__intro">
+          <p class="kicker">Measured savings</p>
+          <h2 id="tokens-title">Bounded retrieval, not full-repo paste.</h2>
+        </div>
+        <div class="tokenMeasure">
+          <div>
+            <span>Before</span>
+            <strong>25,737 tokens</strong>
+            <p>Whole indexed corpus, or repeated file pasting per session.</p>
+          </div>
+          <div>
+            <span>After</span>
+            <strong>1,387 tokens</strong>
+            <p>Only the chunks Qdrant returns for the actual query.</p>
+          </div>
+          <div>
+            <span>Saved</span>
+            <strong>94.6%</strong>
+            <p>Measured on this repository with <code>gpc token-savings</code>. Your numbers depend on project size and query.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="section multiProject" aria-labelledby="multi-title">
+        <div class="section__intro">
+          <p class="kicker">Real example</p>
+          <h2 id="multi-title">One product, many repositories, one indexed view.</h2>
+        </div>
+        <div class="repoStory">
+          <div class="repoStack" aria-label="Example repositories">
+            <div><span>commerce-api</span><small>orders, auth, payments</small></div>
+            <div><span>commerce-workers</span><small>queues, email, ERP sync</small></div>
+            <div><span>commerce-web</span><small>checkout, catalog, account</small></div>
+            <div><span>commerce-admin</span><small>operations and support</small></div>
+            <div><span>commerce-mobile</span><small>mobile customer journey</small></div>
+          </div>
+          <div class="repoStory__copy">
+            <p>
+              To you, these folders are one product. To most AI tools they look
+              like unrelated repositories — unless you re-explain the
+              connection every prompt.
+            </p>
+            <p>
+              GPC indexes them under one project slug. When the assistant asks
+              about checkout, it can pull the web component, the API route, the
+              payment worker and the admin status screen in one bounded
+              retrieval, plus the Graphify edges that connect them.
+            </p>
+          </div>
+        </div>
+        <div class="conceptFlow" aria-label="How GPC unifies project context">
+          <div class="flowColumn">
+            <span class="flowLabel">Your machine</span>
+            <strong>Many Git repositories</strong>
+            <p>API, workers, web, admin and mobile live in separate folders.</p>
+          </div>
+          <div class="flowArrow" aria-hidden="true"></div>
+          <div class="flowColumn flowColumn--core">
+            <span class="flowLabel">GPC</span>
+            <strong>One indexed project</strong>
+            <p>Postgres + Qdrant store chunks and vectors. Neo4j holds the consolidated Graphify graph.</p>
+          </div>
+          <div class="flowArrow" aria-hidden="true"></div>
+          <div class="flowColumn">
+            <span class="flowLabel">AI tools</span>
+            <strong>Same MCP endpoint</strong>
+            <p>Codex, Claude, Copilot and Gemini query the same project through the GPC MCP server.</p>
+          </div>
+        </div>
+        <ul class="integrationList">
+          <li><strong>Before GPC</strong><span>The AI sees the current folder and waits for you to paste the missing pieces.</span></li>
+          <li><strong>After GPC</strong><span>Any connected AI can ask for the project context and receive the relevant chunks from every repo.</span></li>
+          <li><strong>What Graphify adds</strong><span>Relationships, not just text matches. The graph shows what calls what.</span></li>
+          <li><strong>Why tokens drop</strong><span>The model receives a focused slice instead of entire repositories and repeated explanations.</span></li>
+        </ul>
+      </section>
+
+      <section class="section closing" aria-labelledby="closing-title">
+        <p class="kicker">Try it</p>
+        <h2 id="closing-title">Persistent context as infrastructure, not chat history.</h2>
+        <div class="closingActions">
+          <a class="button button--dark" href="https://github.com/rmarquesa/Global-Project-Context" target="_blank" rel="noreferrer">Open the GitHub project</a>
+          <a class="link link--dark" href="https://github.com/rmarquesa/Global-Project-Context#quickstart" target="_blank" rel="noreferrer">Read the quickstart</a>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <p>Created by Rodrigo Alves · <a href="https://github.com/rmarquesa/Global-Project-Context/blob/main/LICENSE" target="_blank" rel="noreferrer">AGPL v3</a></p>
+      <div class="footerLinks" aria-label="Author profiles">
+        <a href="https://github.com/rmarquesa" target="_blank" rel="noreferrer" aria-label="Rodrigo Alves on GitHub">
+          <img src="https://cdn.jsdelivr.net/npm/simple-icons@latest/icons/github.svg" alt="" loading="lazy" />
+          <span>GitHub</span>
+        </a>
+        <a href="https://www.linkedin.com/in/rodrigomarquesalves" target="_blank" rel="noreferrer" aria-label="Rodrigo Alves on LinkedIn">
+          <img src="https://cdn.jsdelivr.net/npm/simple-icons@latest/icons/linkedin.svg" alt="" loading="lazy" />
+          <span>LinkedIn</span>
+        </a>
+      </div>
+    </footer>
+
+    <script src="./app.js"></script>
+  </body>
+</html>

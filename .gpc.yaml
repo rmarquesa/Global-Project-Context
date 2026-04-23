@@ -1,0 +1,4 @@
+project: gpc
+name: GPC
+aliases:
+  - global-project-context

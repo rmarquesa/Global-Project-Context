@@ -1,0 +1,17 @@
+.git
+.codex
+.env
+.env.*
+!.env.example
+venv
+.venv
+__pycache__
+*.pyc
+graphify-out
+site
+data
+tmp
+logs
+*.log
+.DS_Store
+

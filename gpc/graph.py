@@ -1,0 +1,263 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any
+
+import psycopg
+from psycopg.rows import dict_row
+from psycopg.types.json import Jsonb
+
+from gpc.config import NEO4J_PASSWORD, NEO4J_URI, NEO4J_USER, POSTGRES_DSN
+
+
+try:
+    from neo4j import GraphDatabase
+except ImportError:  # pragma: no cover - exercised in environments without optional deps
+    GraphDatabase = None
+
+
+class Neo4jDependencyError(RuntimeError):
+    pass
+
+
+@dataclass(frozen=True)
+class ProjectionStats:
+    projects_written: int
+    entities_written: int
+    relations_written: int
+
+
+def postgres_connect() -> psycopg.Connection:
+    return psycopg.connect(POSTGRES_DSN, row_factory=dict_row)
+
+
+def neo4j_driver():
+    if GraphDatabase is None:
+        raise Neo4jDependencyError(
+            "Missing neo4j Python driver. Install dependencies with "
+            "`./venv/bin/pip install -r requirements.txt`."
+        )
+
+    return GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
+
+
+def ensure_neo4j_constraints() -> None:
+    statements = [
+        """
+        create constraint gpc_project_id if not exists
+        for (p:GPCProject)
+        require p.id is unique
+        """,
+        """
+        create constraint gpc_entity_id if not exists
+        for (e:GPCEntity)
+        require e.id is unique
+        """,
+    ]
+
+    with neo4j_driver() as driver:
+        with driver.session() as session:
+            for statement in statements:
+                session.run(statement)
+
+
+def project_graph_to_neo4j(projection_name: str = "default") -> ProjectionStats:
+    projection_id = _start_projection(projection_name)
+
+    try:
+        ensure_neo4j_constraints()
+        projects = _fetch_projects()
+        entities = _fetch_entities()
+        relations = _fetch_relations()
+
+        with neo4j_driver() as driver:
+            with driver.session() as session:
+                session.execute_write(_upsert_projects, projects)
+                session.execute_write(_upsert_entities, entities)
+                session.execute_write(_upsert_relations, relations)
+
+        stats = ProjectionStats(
+            projects_written=len(projects),
+            entities_written=len(entities),
+            relations_written=len(relations),
+        )
+        _finish_projection(projection_id, "succeeded", stats)
+        return stats
+    except Exception as exc:
+        _fail_projection(projection_id, exc)
+        raise
+
+
+def neo4j_healthcheck() -> str:
+    with neo4j_driver() as driver:
+        with driver.session() as session:
+            value = session.run("return 'ok' as status").single()["status"]
+    return value
+
+
+def _start_projection(projection_name: str) -> str:
+    with postgres_connect() as conn:
+        row = conn.execute(
+            """
+            insert into gpc_graph_projections (projection_name, status)
+            values (%s, 'running')
+            returning id
+            """,
+            (projection_name,),
+        ).fetchone()
+        return str(row["id"])
+
+
+def _finish_projection(
+    projection_id: str,
+    status: str,
+    stats: ProjectionStats,
+) -> None:
+    with postgres_connect() as conn:
+        conn.execute(
+            """
+            update gpc_graph_projections
+            set
+                status = %s,
+                finished_at = now(),
+                projects_written = %s,
+                entities_written = %s,
+                relations_written = %s
+            where id = %s
+            """,
+            (
+                status,
+                stats.projects_written,
+                stats.entities_written,
+                stats.relations_written,
+                projection_id,
+            ),
+        )
+
+
+def _fail_projection(projection_id: str, exc: Exception) -> None:
+    with postgres_connect() as conn:
+        conn.execute(
+            """
+            update gpc_graph_projections
+            set
+                status = 'failed',
+                finished_at = now(),
+                error_message = %s,
+                metadata = metadata || %s
+            where id = %s
+            """,
+            (
+                str(exc),
+                Jsonb({"error_type": exc.__class__.__name__}),
+                projection_id,
+            ),
+        )
+
+
+def _fetch_projects() -> list[dict[str, Any]]:
+    with postgres_connect() as conn:
+        return conn.execute(
+            """
+            select
+                id::text as id,
+                slug,
+                name,
+                root_path,
+                description
+            from gpc_projects
+            order by slug
+            """
+        ).fetchall()
+
+
+def _fetch_entities() -> list[dict[str, Any]]:
+    with postgres_connect() as conn:
+        return conn.execute(
+            """
+            select
+                e.id::text as id,
+                e.project_id::text as project_id,
+                e.name,
+                e.entity_type,
+                e.external_ref,
+                e.description,
+                p.slug as project_slug
+            from gpc_entities e
+            left join gpc_projects p on p.id = e.project_id
+            order by e.name
+            """
+        ).fetchall()
+
+
+def _fetch_relations() -> list[dict[str, Any]]:
+    with postgres_connect() as conn:
+        return conn.execute(
+            """
+            select
+                r.id::text as id,
+                r.project_id::text as project_id,
+                r.source_entity_id::text as source_entity_id,
+                r.target_entity_id::text as target_entity_id,
+                r.relation_type,
+                r.confidence,
+                r.evidence_chunk_id::text as evidence_chunk_id
+            from gpc_relations r
+            order by r.created_at, r.id
+            """
+        ).fetchall()
+
+
+def _upsert_projects(tx, projects: list[dict[str, Any]]) -> None:
+    tx.run(
+        """
+        unwind $projects as project
+        merge (p:GPCProject {id: project.id})
+        set
+            p.slug = project.slug,
+            p.name = project.name,
+            p.root_path = project.root_path,
+            p.description = project.description,
+            p.updated_at = datetime()
+        """,
+        projects=projects,
+    )
+
+
+def _upsert_entities(tx, entities: list[dict[str, Any]]) -> None:
+    tx.run(
+        """
+        unwind $entities as entity
+        merge (e:GPCEntity {id: entity.id})
+        set
+            e.name = entity.name,
+            e.entity_type = entity.entity_type,
+            e.external_ref = entity.external_ref,
+            e.description = entity.description,
+            e.project_id = entity.project_id,
+            e.project_slug = entity.project_slug,
+            e.updated_at = datetime()
+        with e, entity
+        match (p:GPCProject {id: entity.project_id})
+        merge (p)-[:OWNS_ENTITY]->(e)
+        """,
+        entities=[entity for entity in entities if entity.get("project_id")],
+    )
+
+
+def _upsert_relations(tx, relations: list[dict[str, Any]]) -> None:
+    tx.run(
+        """
+        unwind $relations as relation
+        match (source:GPCEntity {id: relation.source_entity_id})
+        match (target:GPCEntity {id: relation.target_entity_id})
+        merge (source)-[r:GPC_RELATION {id: relation.id}]->(target)
+        set
+            r.relation_type = relation.relation_type,
+            r.project_id = relation.project_id,
+            r.confidence = relation.confidence,
+            r.evidence_chunk_id = relation.evidence_chunk_id,
+            r.updated_at = datetime()
+        """,
+        relations=relations,
+    )

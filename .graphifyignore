@@ -1,0 +1,37 @@
+# Local environment and dependency trees
+venv
+.venv
+env
+.env
+node_modules
+site-packages
+__pycache__
+
+# Runtime/generated data
+.gpc
+data
+tmp
+temp
+logs
+*.log
+
+# Generated graphify output. graphify-out/memory is still scanned explicitly by graphify.
+graphify-out
+
+# Local metadata and noise
+.git
+.DS_Store
+.graphify_python
+*.pyc
+
+# Secrets and local configuration
+.env
+.env.local
+.env.*.local
+.envrc
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.csr

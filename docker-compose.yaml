@@ -1,0 +1,92 @@
+name: gpc
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    container_name: gpc_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${GPC_POSTGRES_USER:-gpc}
+      POSTGRES_PASSWORD: ${GPC_POSTGRES_PASSWORD:-gpcpass}
+      POSTGRES_DB: ${GPC_POSTGRES_DB:-gpc}
+    ports:
+      - "${GPC_POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - gpc_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  qdrant:
+    image: qdrant/qdrant
+    container_name: gpc_qdrant
+    restart: unless-stopped
+    ports:
+      - "${GPC_QDRANT_HTTP_PORT:-6333}:6333"
+      - "${GPC_QDRANT_GRPC_PORT:-6334}:6334"
+    volumes:
+      - gpc_qdrant_data:/qdrant/storage
+
+  neo4j:
+    image: neo4j:5-community
+    container_name: gpc_neo4j
+    restart: unless-stopped
+    environment:
+      NEO4J_AUTH: neo4j/${GPC_NEO4J_PASSWORD:-gpcneo4jpass}
+      GPC_NEO4J_PASSWORD: ${GPC_NEO4J_PASSWORD:-gpcneo4jpass}
+    ports:
+      - "${GPC_NEO4J_BROWSER_PORT:-7474}:7474"
+      - "${GPC_NEO4J_BOLT_PORT:-7687}:7687"
+    volumes:
+      - gpc_neo4j_data:/data
+      - gpc_neo4j_logs:/logs
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "cypher-shell -u neo4j -p \"$${GPC_NEO4J_PASSWORD}\" 'RETURN 1'",
+        ]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+
+  gpc-mcp-http:
+    build: .
+    container_name: gpc_mcp_http
+    profiles:
+      - http
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+    environment:
+      GPC_POSTGRES_DSN: postgresql://${GPC_POSTGRES_USER:-gpc}:${GPC_POSTGRES_PASSWORD:-gpcpass}@postgres:5432/${GPC_POSTGRES_DB:-gpc}
+      GPC_QDRANT_HOST: qdrant
+      GPC_QDRANT_PORT: 6333
+      GPC_OLLAMA_HOST: ${GPC_OLLAMA_HOST:-http://host.docker.internal:11434}
+      GPC_OLLAMA_EMBEDDING_MODEL: ${GPC_OLLAMA_EMBEDDING_MODEL:-nomic-embed-text:latest}
+      GPC_MCP_HTTP_HOST: 0.0.0.0
+      GPC_MCP_HTTP_PORT: 8765
+      GPC_MCP_HTTP_PATH: /mcp
+    ports:
+      - "${GPC_MCP_HTTP_PORT:-8765}:8765"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+volumes:
+  gpc_postgres_data:
+    name: gpc_postgres_data
+  gpc_qdrant_data:
+    name: gpc_qdrant_data
+  gpc_neo4j_data:
+    name: gpc_neo4j_data
+  gpc_neo4j_logs:
+    name: gpc_neo4j_logs

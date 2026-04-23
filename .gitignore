@@ -1,0 +1,73 @@
+# OS/editor noise
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+AGENTS.md
+.codex
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.csr
+*.sqlite
+*.sqlite3
+*.db
+
+# Python
+venv/
+.venv/
+env/
+.env/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.egg-info/
+
+# Build/package outputs
+dist/
+build/
+out/
+target/
+
+# Node/tooling, in case future UI tooling is added
+node_modules/
+.turbo/
+.next/
+.vite/
+coverage/
+
+# Local runtime data
+.gpc/
+data/
+tmp/
+temp/
+logs/
+*.log
+
+# Docker/local service state if bind mounts are introduced later
+postgres-data/
+qdrant-data/
+neo4j-data/
+neo4j-logs/
+
+# Generated graphify artifacts
+graphify-out/
+.graphify_python
+
+# Local generated backups
+*.bak
+*.backup
+*.gpc-backup-*
