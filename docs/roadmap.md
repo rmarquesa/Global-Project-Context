@@ -66,6 +66,17 @@ Expansões naturais que ficam na Fase 2:
       e nota em [docs/token-economy.md](token-economy.md) sobre baseline
       otimista vs economia realista (30–97% dependendo do tipo de pergunta).
 
+## Fase 1.9 — Project rename (entregue)
+
+**Entregue em 2026-04-24.** Corrigir slug de projeto (ex.: placeholder que
+vazou em `gpc init`) sem precisar mexer em SQL, Qdrant, Neo4j na mão.
+
+- [x] [gpc/project_rename.py](../gpc/project_rename.py): `rename_project(old, new, new_name=None, rename_default_repo=True)` atualiza Postgres (transação: `gpc_projects`, `gpc_repos` com mesmo slug do projeto, `gpc_self_metrics`, `gpc_project_aliases`), Qdrant (`project_slug`/`project_name` nos payloads), e Neo4j (`GPCProject.slug`, `GraphifyProject.slug`, `project_slug` em repos/entities/nodes, mais `id` dos GraphifyNodes/GraphifyRepos que começam com o slug antigo). Slug antigo vira alias histórico.
+- [x] CLI `gpc project rename <old> <new> [--new-name N] [--keep-default-repo] --yes [--json]`.
+- [x] Smoke test [tests/smoke/project_rename_smoke_test.py](../tests/smoke/project_rename_smoke_test.py) cobre Postgres + Qdrant + Neo4j.
+- [x] Aplicado contra `project-slug` → `l3games` no ambiente ao vivo
+      (1 projeto, 1 repo, 144 payloads Qdrant reetiquetados).
+
 ## Fase 3.1 — Coleta longitudinal + graph_diff (entregue)
 
 **Entregue em 2026-04-24.** Começa a coletar os sinais longitudinais que
