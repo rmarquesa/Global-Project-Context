@@ -352,7 +352,7 @@ Setup steps, environment variables and Cypher examples live in
 
 ## MCP Tools
 
-The MCP server exposes thirteen read-only tools:
+The MCP server exposes fourteen read-only tools:
 
 - `gpc.health` — service availability.
 - `gpc.resolve_project` — look up a project by `cwd` or slug.
@@ -366,6 +366,7 @@ The MCP server exposes thirteen read-only tools:
 - `gpc.graph_neighbors` — typed neighbours of a symbol in the Neo4j projection.
 - `gpc.graph_summary` — god nodes, repo breakdown, cross-repo bridges.
 - `gpc.graph_path` — shortest path between two symbols with typed hops.
+- `gpc.graph_community` — drill into a community: members, repos, external bridges.
 - `gpc.mcp_usage` — aggregate call log so you can confirm clients are hitting GPC.
 
 Pass `project` when you know the slug, or `cwd` when the client is operating
