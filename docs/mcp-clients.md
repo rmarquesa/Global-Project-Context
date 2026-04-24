@@ -228,6 +228,26 @@ to show how much context would otherwise have been sent.
    `gpc install-clients`.
 3. Restart the client. Most MCP clients only load configuration at startup.
 
+### Client shows the server as `failed` / `Server disconnected`
+
+The server crashed before or during the MCP handshake. Check
+`~/Library/Logs/Claude/mcp-server-gpc.log` (macOS Claude Desktop) for the
+actual exception.
+
+The most common cause on a fresh install is **`psycopg` cannot find
+`libpq`**. That happens because GUI MCP clients spawn the server with a
+trimmed `PATH` (for example `/bin:/usr/sbin:/sbin`) so Homebrew-installed
+`libpq` is invisible even though it works in your terminal. Fix it by
+installing the `psycopg` wheel that bundles `libpq`:
+
+```bash
+./venv/bin/pip install 'psycopg[binary]'
+```
+
+`requirements.txt` already pins `psycopg[binary]`, so a clean
+`./venv/bin/pip install -r requirements.txt` gets this right out of the
+box. After installing, restart the client so it respawns the server.
+
 ### `gpc.context` returns empty results
 
 1. Run `gpc-status --project <slug>` to confirm the project has indexed

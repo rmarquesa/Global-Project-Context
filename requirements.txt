@@ -1,7 +1,7 @@
 gitpython
 mcp
 neo4j
-psycopg
+psycopg[binary]
 python-dotenv
 qdrant-client
 tiktoken
