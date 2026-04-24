@@ -92,6 +92,61 @@ Neo4j Community supports a single user database; GPC works around this by
 namespacing nodes with `project_slug` plus `repo_slug` rather than relying on
 multi-database separation.
 
+### Project + repo model
+
+A GPC project is a logical unit (e.g. `alugafacil`). Each project owns one or
+more repositories via `gpc_repos`, and every `gpc_files` / `gpc_chunks` row
+carries both a `project_id` and a `repo_id`. The Neo4j projection mirrors this
+hierarchy:
+
+```text
+(:GPCProject {slug: "alugafacil"})
+  -[:OWNS_REPO]-> (:GPCRepo {slug: "workers-gateway"})
+  -[:OWNS_REPO]-> (:GPCRepo {slug: "workers-users"})
+  -[:OWNS_REPO]-> (:GPCRepo {slug: "web"})
+  -[:OWNS_ENTITY]-> (:GPCEntity { ... })
+```
+
+Typical bootstrapping of a multi-repo project:
+
+```bash
+gpc project create alugafacil --name "AlugaFácil"
+gpc init /path/to/workers-gateway --project alugafacil --repo workers-gateway
+gpc init /path/to/workers-users   --project alugafacil --repo workers-users
+gpc init /path/to/web             --project alugafacil --repo web
+```
+
+Existing standalone projects can be folded into a shared parent with
+`gpc project consolidate --target <slug> --source <slug> [--source ...]`.
+Aliases of the source projects are re-pointed to the target, and files,
+chunks, entities, relations and decisions are moved atomically.
+
+Neo4j remains a rebuildable read model; Postgres is the source of truth. Use
+`gpc graph-reset --yes [--rebuild]` to wipe the projection and rebuild it
+from Postgres, and `gpc reset --yes` for a nuclear reset across all three
+backends (Postgres schema drop + re-migrate, Neo4j wipe, Qdrant recreate).
+
+### Cross-repo bridging
+
+Graphify runs inside each repository in isolation. It never sees two repos at
+once, so it cannot extract relationships that span them. To reconstruct those
+relationships without forcing a monorepo-style unified run, `gpc/cross_repo.py`
+adds `CROSS_REPO_BRIDGE` edges at the Neo4j layer *after* each projection.
+
+Bridges are scoped strictly by `project_slug` and tagged with confidence so
+downstream clients can filter noise. Three rules ship today:
+
+| Rule | Confidence | Signal |
+|---|---|---|
+| `same_source_file` | `INFERRED` (0.90) | Two `GraphifyNode` in different repos share the same relative `source_file`. Strong indicator of vendored code or contract files. |
+| `same_code_symbol` | `INFERRED` (0.75) | Same `label` + `file_type=code`, label is distinctive (not `main`, `index`, `config`, etc.). |
+| `same_generic_symbol` | `AMBIGUOUS` (0.30) | Same label but generic. Opt-in via `--include-ambiguous`. |
+
+Bridging is idempotent (`MERGE` on `(a, b, rule)`), runs after every
+post-commit projection when `GPC_GRAPHIFY_BRIDGE_AFTER=1` (default), and can
+be invoked manually with `gpc graph-bridge --project <slug>` or across all
+projects with `gpc graph-bridge` (no slug argument).
+
 ## Data Flow
 
 ### Index path (writes)
@@ -155,9 +210,18 @@ explicit and inspectable.
 
 ## MCP Surface
 
-The current server exposes seven read-only tools (`gpc.health`,
-`gpc.resolve_project`, `gpc.list_projects`, `gpc.index_status`, `gpc.search`,
-`gpc.context`, `gpc.estimate_token_savings`).
+The current server exposes twelve read-only tools across three surfaces:
+
+- **Identity / discovery** — `gpc.health`, `gpc.resolve_project`,
+  `gpc.resolve_repo`, `gpc.list_projects`, `gpc.list_repos`,
+  `gpc.index_status`.
+- **Semantic retrieval** — `gpc.search`, `gpc.context`,
+  `gpc.estimate_token_savings`. These run over Qdrant embeddings and accept
+  an optional `repo` filter.
+- **Structural queries** — `gpc.graph_neighbors`, `gpc.graph_summary`,
+  `gpc.graph_path`. These read the Neo4j Graphify projection and expose
+  `confidence` on every edge; by default only `EXTRACTED` edges are
+  returned.
 
 Tool inputs, semantics and client setup are documented in
 [mcp-clients.md](mcp-clients.md).

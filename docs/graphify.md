@@ -51,6 +51,19 @@ This lets one logical GPC project (e.g. `commerce`) consolidate Graphify data
 from multiple Git repositories (`commerce-api`, `commerce-workers`,
 `commerce-web`) into a single navigable graph.
 
+Because Graphify runs inside each repository in isolation, it never creates
+edges between repos on its own. `gpc graph-bridge --project <slug>` stitches
+the isolated subgraphs together by writing `CROSS_REPO_BRIDGE` edges based on
+heuristics (matching `source_file`, distinctive code symbols, etc.). Bridging
+is idempotent and runs automatically after every post-commit projection when
+`GPC_GRAPHIFY_BRIDGE_AFTER=1` (default).
+
+Every bridge edge carries `confidence` (`INFERRED` or `AMBIGUOUS`),
+`confidence_score` (0..1), `rule` (which heuristic fired), and `evidence`
+(the label or file path that triggered the match). See
+[architecture.md — Cross-repo bridging](architecture.md#cross-repo-bridging)
+for the rule table.
+
 ## Per-Repository Setup
 
 Each repository that should contribute to the consolidated graph needs three
