@@ -9,17 +9,22 @@ installation, transport options and troubleshooting.
 
 ## MCP Tools
 
-The server exposes seven read-only tools.
+The server exposes twelve read-only tools.
 
 | Tool | Purpose | Key inputs |
 |---|---|---|
 | `gpc.health` | Reports whether Postgres, Qdrant, Ollama and the embedding model are reachable. | — |
 | `gpc.resolve_project` | Resolves a project by `cwd` or slug; returns identity, root and aliases. | `cwd`, `project` |
-| `gpc.list_projects` | Lists registered projects with slugs, root paths and primary languages. | — |
+| `gpc.resolve_repo` | Resolves a `(project, repo)` tuple. Use this inside a multi-repo project so subsequent `search`/`context` calls can scope by repo. | `cwd`, `project`, `repo` |
+| `gpc.list_projects` | Lists registered projects with their repos and aliases. | — |
+| `gpc.list_repos` | Lists repositories under a project. | `project`, `cwd` |
 | `gpc.index_status` | Returns indexed file count, chunk count, Qdrant point count and recent run summaries. | `cwd`, `project`, `runs` |
-| `gpc.search` | Returns ranked chunk hits for a semantic query, hydrated from Postgres. | `query`, `cwd`/`project`, `limit`, `content_chars` |
-| `gpc.context` | Returns one bounded context block ready to inject into a prompt. | `query`, `cwd`/`project`, `max_chunks`, `max_chars` |
+| `gpc.search` | Returns ranked chunk hits for a semantic query, hydrated from Postgres. Pass `repo` to filter. | `query`, `cwd`/`project`, `limit`, `content_chars`, `repo` |
+| `gpc.context` | Returns one bounded context block ready to inject into a prompt. Pass `repo` to filter. | `query`, `cwd`/`project`, `max_chunks`, `max_chars`, `repo` |
 | `gpc.estimate_token_savings` | Reports `indexed_tokens`, `retrieved_tokens` and the estimated saving for a query. | `query`, `cwd`/`project` |
+| `gpc.graph_neighbors` | Neighbours of a node in the Neo4j projection, with typed relations and confidence. Answers "who uses X?". | `node`, `cwd`/`project`, `depth`, `min_confidence`, `relations`, `limit` |
+| `gpc.graph_summary` | God nodes, repo breakdown, cross-repo bridges and communities. The structured equivalent of `GRAPH_REPORT.md`. | `cwd`/`project`, `top_k_gods`, `include_cohesion` |
+| `gpc.graph_path` | Shortest path between two nodes in the Neo4j projection. Each hop carries relation + confidence. | `a`, `b`, `cwd`/`project`, `max_hops`, `min_confidence` |
 
 **Project resolution**. Every tool accepts either `project` (a registered slug
 or alias) or `cwd` (the active repository path). Pass `project` when you
@@ -27,9 +32,34 @@ already know the slug; pass `cwd` when the client is operating inside a
 repository. Without either, the server falls back to `GPC_CALLER_CWD` and
 finally to its own working directory.
 
+**Repo scoping**. A single project can own multiple repositories (e.g.
+`alugafacil` owns `workers-gateway`, `workers-users`, `web`). Pass a single
+slug (`repo: "workers-gateway"`) or a list (`repo: ["workers-gateway", "workers-users"]`)
+to `gpc.search` and `gpc.context` to keep retrieval scoped. When the client
+is already inside a repo directory, `cwd` resolution picks the correct repo
+automatically — no explicit `repo` needed.
+
 **Bounded retrieval**. `gpc.context` enforces `max_chunks` and `max_chars` so
 the returned block fits inside an AI prompt. Use `gpc.search` when you want
 the raw matches with relevance scores instead.
+
+**Semantic vs. structural**. `gpc.search` / `gpc.context` answer "what looks
+like this?" — they return text chunks ranked by embedding similarity. The
+`gpc.graph_*` tools answer "what connects to this?" — they read the Neo4j
+projection and return nodes and typed edges (calls, imports, cross-repo
+bridges). Use them together: `graph_summary` to orient on the project,
+`graph_neighbors` to discover callers and dependencies, `graph_path` to trace
+a chain between two symbols, then `search` / `context` to get the actual code
+behind any interesting node.
+
+**Honesty on graph edges**. Every edge returned by a `graph_*` tool carries a
+`confidence` (`EXTRACTED`, `INFERRED`, or `AMBIGUOUS`) and a numeric
+`confidence_score`. `EXTRACTED` means the relationship is explicit in source
+(calls, imports, citations). `INFERRED` is a heuristic — e.g. two symbols in
+different repos share the same source file path. `AMBIGUOUS` is kept only
+when the caller explicitly passes `min_confidence="AMBIGUOUS"`. The default
+`min_confidence="EXTRACTED"` hides heuristic bridges so the caller cannot
+treat them as fact by accident.
 
 ## Install Client Configuration
 

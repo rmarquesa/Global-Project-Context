@@ -19,7 +19,12 @@ from qdrant_client.models import Filter, FieldCondition, MatchValue, PointStruct
 
 from gpc.config import COLLECTION_NAME, POSTGRES_DSN, QDRANT_HOST, QDRANT_PORT
 from gpc.embeddings import embed_texts
-from gpc.registry import link_project_source, register_project, register_source
+from gpc.registry import (
+    link_project_source,
+    register_project,
+    register_repo,
+    register_source,
+)
 
 
 IGNORED_DIRS = {
@@ -291,27 +296,57 @@ def index_project_path(
     name: str | None = None,
     description: str | None = None,
     options: IndexOptions | None = None,
+    repo_slug: str | None = None,
 ) -> IndexStats:
     opts = options or IndexOptions()
     root = Path(root_path).expanduser().resolve(strict=True)
     if not root.is_dir():
         raise NotADirectoryError(root)
 
-    project = register_project(
-        root,
-        slug=slug,
-        name=name,
-        description=description,
-        metadata={"indexed_by": "gpc_indexer"},
-    )
+    # When indexing via --project <parent>, the caller passes the parent
+    # project slug and the repo slug explicitly. We do NOT call
+    # register_project here because doing so would change the project's own
+    # root_path and fight with its virtual placeholder.
+    if repo_slug:
+        repo = register_repo(
+            slug,
+            root,
+            slug=repo_slug,
+            name=name,
+            description=description,
+            create_project_if_missing=False,
+        )
+        project = {
+            "id": repo["project_id"],
+            "slug": repo["project_slug"],
+            "name": repo.get("project_name") or repo["project_slug"],
+            "root_path": repo["root_path"],
+        }
+    else:
+        project = register_project(
+            root,
+            slug=slug,
+            name=name,
+            description=description,
+            metadata={"indexed_by": "gpc_indexer"},
+        )
+        repo = register_repo(
+            project["slug"],
+            root,
+            slug=project["slug"],
+            name=project["name"],
+            description=description,
+        )
     source = register_source(
         root,
         source_type="project_root",
-        slug=f"{project['slug']}-root",
-        name=f"{project['name']} root",
-        metadata={"indexed_by": "gpc_indexer"},
+        slug=f"{project['slug']}-{repo['slug']}-root"[:60],
+        name=f"{project['name']} root ({repo['slug']})",
+        metadata={"indexed_by": "gpc_indexer", "repo_slug": repo["slug"]},
     )
     link_project_source(project["slug"], source["slug"], role="primary")
+    project["_repo_id"] = repo["id"]
+    project["_repo_slug"] = repo["slug"]
 
     qdrant = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT)
     run_id = _start_index_run(project["id"], opts)
@@ -489,6 +524,8 @@ def _index_file(
                     "project_slug": project["slug"],
                     "project_name": project["name"],
                     "root_path": project["root_path"],
+                    "repo_id": str(project["_repo_id"]) if project.get("_repo_id") else None,
+                    "repo_slug": project.get("_repo_slug"),
                     "file_id": str(chunk_row["file_id"]),
                     "chunk_id": str(chunk_row["id"]),
                     "relative_path": candidate.relative_path,
@@ -772,10 +809,12 @@ def _upsert_file(
     candidate: FileCandidate,
     file_hash: str,
 ) -> dict[str, Any]:
+    repo_id = project.get("_repo_id")
     return conn.execute(
         """
         insert into gpc_files (
             project_id,
+            repo_id,
             relative_path,
             absolute_path,
             language,
@@ -784,8 +823,9 @@ def _upsert_file(
             content_hash,
             metadata
         )
-        values (%s, %s, %s, %s, %s, %s, %s, %s)
-        on conflict (project_id, relative_path) do update set
+        values (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        on conflict (project_id, coalesce(repo_id, '00000000-0000-0000-0000-000000000000'::uuid), relative_path) do update set
+            repo_id = coalesce(excluded.repo_id, gpc_files.repo_id),
             absolute_path = excluded.absolute_path,
             language = excluded.language,
             file_type = excluded.file_type,
@@ -797,6 +837,7 @@ def _upsert_file(
         """,
         (
             project["id"],
+            repo_id,
             candidate.relative_path,
             str(candidate.absolute_path),
             candidate.language,
@@ -830,16 +871,19 @@ def _insert_chunks(
     embedding_model: str,
 ) -> list[dict[str, Any]]:
     rows = []
+    repo_id = project.get("_repo_id") or file_row.get("repo_id")
+    repo_slug = project.get("_repo_slug")
     for chunk in chunks:
         chunk_id = uuid5(
             NAMESPACE_URL,
-            f"gpc/chunk/{project['id']}/{chunk.content_hash}",
+            f"gpc/chunk/{project['id']}/{repo_id or 'no-repo'}/{chunk.content_hash}",
         )
         row = conn.execute(
             """
             insert into gpc_chunks (
                 id,
                 project_id,
+                repo_id,
                 file_id,
                 source_type,
                 chunk_type,
@@ -853,12 +897,13 @@ def _insert_chunks(
                 embedding_model,
                 metadata
             )
-            values (%s, %s, %s, 'project_file', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            values (%s, %s, %s, %s, 'project_file', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             returning *
             """,
             (
                 chunk_id,
                 project["id"],
+                repo_id,
                 file_row["id"],
                 chunk.chunk_type,
                 chunk.index,
@@ -874,6 +919,7 @@ def _insert_chunks(
                         "relative_path": candidate.relative_path,
                         "language": candidate.language,
                         "file_type": candidate.file_type,
+                        "repo_slug": repo_slug,
                     }
                 ),
             ),
@@ -951,17 +997,33 @@ def _prune_missing_files(
     qdrant: QdrantClient,
 ) -> FileIndexResult:
     discovered = sorted(discovered_paths)
+    repo_id = project.get("_repo_id")
     with _connect() as conn:
-        rows = conn.execute(
-            """
-            select f.id, c.qdrant_point_id
-            from gpc_files f
-            left join gpc_chunks c on c.file_id = f.id
-            where f.project_id = %s
-              and not (f.relative_path = any(%s::text[]))
-            """,
-            (project["id"], discovered),
-        ).fetchall()
+        if repo_id:
+            # When a repo is in scope, prune only within that repo so parallel
+            # repos of the same project do not wipe each other's index.
+            rows = conn.execute(
+                """
+                select f.id, c.qdrant_point_id
+                from gpc_files f
+                left join gpc_chunks c on c.file_id = f.id
+                where f.project_id = %s
+                  and f.repo_id = %s
+                  and not (f.relative_path = any(%s::text[]))
+                """,
+                (project["id"], repo_id, discovered),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                select f.id, c.qdrant_point_id
+                from gpc_files f
+                left join gpc_chunks c on c.file_id = f.id
+                where f.project_id = %s
+                  and not (f.relative_path = any(%s::text[]))
+                """,
+                (project["id"], discovered),
+            ).fetchall()
 
     file_ids = sorted({row["id"] for row in rows})
     point_ids = [row["qdrant_point_id"] for row in rows if row["qdrant_point_id"]]

@@ -25,6 +25,7 @@ class ProjectionStats:
     projects_written: int
     entities_written: int
     relations_written: int
+    repos_written: int = 0
 
 
 def postgres_connect() -> psycopg.Connection:
@@ -49,6 +50,11 @@ def ensure_neo4j_constraints() -> None:
         require p.id is unique
         """,
         """
+        create constraint gpc_repo_id if not exists
+        for (r:GPCRepo)
+        require r.id is unique
+        """,
+        """
         create constraint gpc_entity_id if not exists
         for (e:GPCEntity)
         require e.id is unique
@@ -67,12 +73,14 @@ def project_graph_to_neo4j(projection_name: str = "default") -> ProjectionStats:
     try:
         ensure_neo4j_constraints()
         projects = _fetch_projects()
+        repos = _fetch_repos()
         entities = _fetch_entities()
         relations = _fetch_relations()
 
         with neo4j_driver() as driver:
             with driver.session() as session:
                 session.execute_write(_upsert_projects, projects)
+                session.execute_write(_upsert_repos, repos)
                 session.execute_write(_upsert_entities, entities)
                 session.execute_write(_upsert_relations, relations)
 
@@ -80,6 +88,7 @@ def project_graph_to_neo4j(projection_name: str = "default") -> ProjectionStats:
             projects_written=len(projects),
             entities_written=len(entities),
             relations_written=len(relations),
+            repos_written=len(repos),
         )
         _finish_projection(projection_id, "succeeded", stats)
         return stats
@@ -171,6 +180,25 @@ def _fetch_projects() -> list[dict[str, Any]]:
         ).fetchall()
 
 
+def _fetch_repos() -> list[dict[str, Any]]:
+    with postgres_connect() as conn:
+        return conn.execute(
+            """
+            select
+                r.id::text as id,
+                r.project_id::text as project_id,
+                r.slug,
+                r.name,
+                r.root_path,
+                r.description,
+                p.slug as project_slug
+            from gpc_repos r
+            join gpc_projects p on p.id = r.project_id
+            order by p.slug, r.slug
+            """
+        ).fetchall()
+
+
 def _fetch_entities() -> list[dict[str, Any]]:
     with postgres_connect() as conn:
         return conn.execute(
@@ -221,6 +249,29 @@ def _upsert_projects(tx, projects: list[dict[str, Any]]) -> None:
             p.updated_at = datetime()
         """,
         projects=projects,
+    )
+
+
+def _upsert_repos(tx, repos: list[dict[str, Any]]) -> None:
+    if not repos:
+        return
+    tx.run(
+        """
+        unwind $repos as repo
+        merge (r:GPCRepo {id: repo.id})
+        set
+            r.slug = repo.slug,
+            r.name = repo.name,
+            r.root_path = repo.root_path,
+            r.description = repo.description,
+            r.project_id = repo.project_id,
+            r.project_slug = repo.project_slug,
+            r.updated_at = datetime()
+        with r, repo
+        match (p:GPCProject {id: repo.project_id})
+        merge (p)-[:OWNS_REPO]->(r)
+        """,
+        repos=repos,
     )
 
 

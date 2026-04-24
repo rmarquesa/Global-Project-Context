@@ -80,6 +80,14 @@ PY
     exit 0
   fi
 
+  RESOLVED_PROJECT_SLUG="$("$NEO4J_PYTHON" -c '
+import os, re
+from pathlib import Path
+value = os.environ.get("GPC_GRAPHIFY_PROJECT_SLUG") or os.environ.get("GPC_PROJECT_SLUG") or Path.cwd().name
+slug = re.sub(r"[^a-zA-Z0-9_-]+", "-", value.strip()).strip("-_").lower() or "project"
+print(slug)
+')"
+
   "$NEO4J_PYTHON" - <<'PY'
 from __future__ import annotations
 
@@ -251,6 +259,28 @@ try:
 finally:
     driver.close()
 PY
+
+  if [ "${GPC_GRAPHIFY_BRIDGE_AFTER:-1}" = "1" ]; then
+    BRIDGE_RULES_ARG=""
+    if [ -n "${GPC_GRAPHIFY_BRIDGE_INCLUDE_AMBIGUOUS:-}" ] && [ "${GPC_GRAPHIFY_BRIDGE_INCLUDE_AMBIGUOUS}" = "1" ]; then
+      BRIDGE_RULES_ARG="--include-ambiguous"
+    fi
+    GPC_PYTHON="${GPC_PYTHON:-}"
+    if [ -z "$GPC_PYTHON" ]; then
+      for candidate in "$NEO4J_PYTHON" "$PROJECT_ROOT/venv/bin/python" "$PROJECT_ROOT/.venv/bin/python" python3 python; do
+        if [ -n "$candidate" ] && command -v "$candidate" >/dev/null 2>&1 && "$candidate" -c "import gpc" 2>/dev/null; then
+          GPC_PYTHON="$candidate"
+          break
+        fi
+      done
+    fi
+    if [ -n "$GPC_PYTHON" ]; then
+      "$GPC_PYTHON" -m gpc.cli graph-bridge --project "$RESOLVED_PROJECT_SLUG" $BRIDGE_RULES_ARG \
+        || echo "[graphify neo4j] bridge step failed (non-fatal)"
+    else
+      echo "[graphify neo4j] gpc module not importable; skipping cross-repo bridging"
+    fi
+  fi
 
   echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] graphify neo4j sync finished"
 }
