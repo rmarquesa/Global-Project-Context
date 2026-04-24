@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://rmarquesa.github.io/Global-Project-Context/sitemap.xml
