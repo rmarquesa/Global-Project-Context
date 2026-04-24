@@ -241,6 +241,35 @@ def build_parser() -> argparse.ArgumentParser:
     reset_parser.add_argument("--skip-qdrant", action="store_true")
     reset_parser.set_defaults(func=cmd_reset)
 
+    metrics_parser = subparsers.add_parser(
+        "metrics",
+        help="Longitudinal metrics for the graph (drives Fase 3 drift detection).",
+    )
+    metrics_subs = metrics_parser.add_subparsers(dest="metrics_cmd", required=True)
+
+    metrics_collect = metrics_subs.add_parser(
+        "collect",
+        help="Record a snapshot of graph metrics for a project.",
+    )
+    metrics_collect.add_argument("--project", required=True)
+    metrics_collect.add_argument(
+        "--source",
+        default="manual",
+        choices=("manual", "snapshot"),
+        help="Trigger label stored with the snapshot.",
+    )
+    metrics_collect.add_argument("--json", action="store_true")
+    metrics_collect.set_defaults(func=cmd_metrics_collect)
+
+    metrics_list = metrics_subs.add_parser(
+        "list",
+        help="List recent metric snapshots.",
+    )
+    metrics_list.add_argument("--project")
+    metrics_list.add_argument("--limit", type=int, default=20)
+    metrics_list.add_argument("--json", action="store_true")
+    metrics_list.set_defaults(func=cmd_metrics_list)
+
     bridge_parser = subparsers.add_parser(
         "graph-bridge",
         help="Create CROSS_REPO_BRIDGE edges between GraphifyNodes of a project.",
@@ -768,6 +797,67 @@ def cmd_reset(args: argparse.Namespace) -> int:
         f"neo4j_relationships_deleted={report.neo4j_relationships_deleted} "
         f"qdrant_recreated={report.qdrant_collection_recreated}"
     )
+    return 0
+
+
+def cmd_metrics_collect(args: argparse.Namespace) -> int:
+    from gpc.self_metrics import collect_metrics
+
+    result = collect_metrics(project_slug=args.project, source=args.source)
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "id": result.id,
+                    "project_slug": result.project_slug,
+                    "source": result.source,
+                    "counts": result.counts,
+                    "god_nodes_top10": result.god_nodes_top10,
+                    "metadata": result.metadata,
+                },
+                default=str,
+                indent=2,
+            )
+        )
+        return 0
+    print(
+        f"snapshot={result.id} project={result.project_slug} source={result.source}"
+    )
+    for key in (
+        "files_count",
+        "chunks_count",
+        "entities_count",
+        "relations_count",
+        "graphify_nodes",
+        "graphify_edges_same_repo",
+        "graphify_edges_cross_repo",
+        "cross_repo_bridges",
+        "weakly_connected_nodes",
+        "community_count",
+    ):
+        value = result.counts.get(key)
+        if value is not None:
+            print(f"  {key}={value}")
+    return 0
+
+
+def cmd_metrics_list(args: argparse.Namespace) -> int:
+    from gpc.self_metrics import list_snapshots
+
+    rows = list_snapshots(project_slug=args.project, limit=args.limit)
+    if args.json:
+        print(json.dumps(rows, default=str, indent=2))
+        return 0
+    if not rows:
+        print("No metric snapshots recorded yet.")
+        return 0
+    for row in rows:
+        print(
+            f"{row['collected_at']}  {row['project_slug']:<25} {row['source']:<14} "
+            f"files={row.get('files_count')} chunks={row.get('chunks_count')} "
+            f"nodes={row.get('graphify_nodes')} bridges={row.get('cross_repo_bridges')} "
+            f"weak={row.get('weakly_connected_nodes')} comms={row.get('community_count')}"
+        )
     return 0
 
 

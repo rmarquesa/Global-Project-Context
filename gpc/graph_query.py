@@ -380,6 +380,153 @@ def _has_apoc(session) -> bool:
         return False
 
 
+def graph_diff(
+    project_slug: str,
+    *,
+    window_hours: int | None = None,
+    from_id: str | None = None,
+    to_id: str | None = None,
+) -> dict[str, Any]:
+    """Diff two ``gpc_self_metrics`` snapshots for a project.
+
+    Default: compares the latest snapshot to the most recent one older than
+    ``window_hours`` ago (default 24). Pass ``from_id`` / ``to_id`` for an
+    exact pair — useful for programmatic drift detection.
+
+    The return payload highlights three axes the caller care about:
+        * ``numeric_deltas`` — raw count changes (files, nodes, bridges…);
+        * ``god_nodes_diff`` — which labels entered / exited the top 10;
+        * ``confidence_shift`` — movement in the EXTRACTED/INFERRED/AMBIGUOUS
+          distribution, expressed both in absolute counts and in percentage
+          points.
+    """
+
+    if not project_slug:
+        raise ValueError("project_slug is required")
+
+    # Imported lazily so graph_query stays importable without the collector
+    # schema being present (older deployments).
+    from gpc.self_metrics import fetch_pair
+
+    frm, to = fetch_pair(
+        project_slug=project_slug,
+        window_hours=window_hours,
+        from_id=from_id,
+        to_id=to_id,
+    )
+    if not to:
+        return {
+            "project_slug": project_slug,
+            "found": False,
+            "reason": "no_snapshots_for_project",
+        }
+    if not frm:
+        return {
+            "project_slug": project_slug,
+            "found": False,
+            "reason": "no_prior_snapshot_in_window",
+            "latest": _snapshot_view(to),
+        }
+
+    numeric_fields = (
+        "files_count",
+        "chunks_count",
+        "entities_count",
+        "relations_count",
+        "graphify_projects",
+        "graphify_repos",
+        "graphify_nodes",
+        "graphify_edges_same_repo",
+        "graphify_edges_cross_repo",
+        "cross_repo_bridges",
+        "extracted_count",
+        "inferred_count",
+        "ambiguous_count",
+        "weakly_connected_nodes",
+        "community_count",
+    )
+    numeric_deltas = {
+        field: {
+            "before": frm.get(field),
+            "after": to.get(field),
+            "delta": _delta(to.get(field), frm.get(field)),
+        }
+        for field in numeric_fields
+    }
+
+    god_from = {g.get("label") for g in (frm.get("god_nodes_top10") or []) if g.get("label")}
+    god_to = {g.get("label") for g in (to.get("god_nodes_top10") or []) if g.get("label")}
+    god_diff = {
+        "entered": sorted(god_to - god_from),
+        "exited": sorted(god_from - god_to),
+        "stable": sorted(god_from & god_to),
+    }
+
+    confidence_shift = _confidence_shift(frm, to)
+
+    return {
+        "project_slug": project_slug,
+        "found": True,
+        "from": _snapshot_view(frm),
+        "to": _snapshot_view(to),
+        "numeric_deltas": numeric_deltas,
+        "god_nodes_diff": god_diff,
+        "confidence_shift": confidence_shift,
+    }
+
+
+def _delta(after: Any, before: Any) -> int | None:
+    if after is None or before is None:
+        return None
+    try:
+        return int(after) - int(before)
+    except (TypeError, ValueError):
+        return None
+
+
+def _snapshot_view(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": str(row.get("id")),
+        "collected_at": str(row.get("collected_at")),
+        "source": row.get("source"),
+    }
+
+
+def _confidence_shift(frm: dict[str, Any], to: dict[str, Any]) -> dict[str, Any]:
+    def _totals(row: dict[str, Any]) -> tuple[int, int, int]:
+        return (
+            int(row.get("extracted_count") or 0),
+            int(row.get("inferred_count") or 0),
+            int(row.get("ambiguous_count") or 0),
+        )
+
+    e_from, i_from, a_from = _totals(frm)
+    e_to, i_to, a_to = _totals(to)
+    total_from = max(1, e_from + i_from + a_from)
+    total_to = max(1, e_to + i_to + a_to)
+
+    def _pct(count: int, total: int) -> float:
+        return round((count / total) * 100, 2)
+
+    return {
+        "before_pct": {
+            "EXTRACTED": _pct(e_from, total_from),
+            "INFERRED": _pct(i_from, total_from),
+            "AMBIGUOUS": _pct(a_from, total_from),
+        },
+        "after_pct": {
+            "EXTRACTED": _pct(e_to, total_to),
+            "INFERRED": _pct(i_to, total_to),
+            "AMBIGUOUS": _pct(a_to, total_to),
+        },
+        "delta_pp": {
+            "EXTRACTED": round(_pct(e_to, total_to) - _pct(e_from, total_from), 2),
+            "INFERRED": round(_pct(i_to, total_to) - _pct(i_from, total_from), 2),
+            "AMBIGUOUS": round(_pct(a_to, total_to) - _pct(a_from, total_from), 2),
+        },
+    }
+
+
 def graph_community(
     project_slug: str,
     community_id: int,

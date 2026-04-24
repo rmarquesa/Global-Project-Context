@@ -452,6 +452,14 @@ def build_bridges(
                 )
                 stats.edges_written += len(symbol_generic)
 
+    # Longitudinal snapshot — cheap at the end of bridging.
+    try:
+        from gpc.self_metrics import collect_metrics
+
+        collect_metrics(project_slug=project_slug, source="graph-bridge")
+    except Exception:  # noqa: BLE001 — never block bridging
+        pass
+
     return stats
 
 

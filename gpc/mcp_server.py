@@ -24,10 +24,12 @@ from gpc.embeddings import active_embedding_model, embedding_dimension
 from gpc.graph_query import (
     ALLOWED_CONFIDENCES,
     graph_community,
+    graph_diff,
     graph_neighbors,
     graph_path,
     graph_summary,
 )
+from gpc.self_metrics import collect_metrics, list_snapshots
 from gpc.mcp_observability import log_mcp_call
 from gpc.registry import list_projects, list_repos, resolve_project, resolve_repo
 from gpc.search import compose_project_context, search_project_context
@@ -401,6 +403,74 @@ def mcp_graph_path(
         )
         payload["project"] = _project_payload(resolved)
         return {"ok": True, **payload}
+    except Exception as exc:
+        return {"ok": False, "error": _error_payload(exc)}
+
+
+@mcp.tool(name="gpc.self_metrics")
+@log_mcp_call("gpc.self_metrics")
+def mcp_self_metrics(
+    project: str | None = None,
+    cwd: str | None = None,
+    limit: int = 10,
+    collect: bool = False,
+    source: str = "snapshot",
+) -> dict[str, Any]:
+    """Return recent ``gpc_self_metrics`` snapshots for a project.
+
+    Set ``collect=true`` to record a fresh snapshot before returning the
+    list. Use this to drive drift detection: compare ``god_nodes_top10``,
+    confidence distribution, or weakly-connected counts between snapshots.
+    """
+    try:
+        resolved = None
+        if project or cwd:
+            resolved = resolve_project(
+                project=project,
+                cwd=_effective_cwd(cwd) if cwd else None,
+            )
+        slug = resolved["slug"] if resolved else None
+        if collect:
+            if not slug:
+                raise ValueError("collect=true requires a resolved project")
+            collect_metrics(project_slug=slug, source=source)
+        rows = list_snapshots(project_slug=slug, limit=max(1, min(int(limit), 100)))
+        payload = {
+            "ok": True,
+            "project": _project_payload(resolved) if resolved else None,
+            "count": len(rows),
+            "snapshots": _json_safe(rows),
+        }
+        return payload
+    except Exception as exc:
+        return {"ok": False, "error": _error_payload(exc)}
+
+
+@mcp.tool(name="gpc.graph_diff")
+@log_mcp_call("gpc.graph_diff")
+def mcp_graph_diff(
+    project: str | None = None,
+    cwd: str | None = None,
+    window_hours: int = 24,
+    from_id: str | None = None,
+    to_id: str | None = None,
+) -> dict[str, Any]:
+    """Diff two ``gpc_self_metrics`` snapshots and surface drift signals.
+
+    Defaults compare the latest snapshot to the most recent one older than
+    ``window_hours`` ago. Pass ``from_id`` + ``to_id`` for an exact pair
+    (obtain them from ``gpc.self_metrics``).
+    """
+    try:
+        resolved = resolve_project(project=project, cwd=_effective_cwd(cwd))
+        payload = graph_diff(
+            resolved["slug"],
+            window_hours=max(1, min(int(window_hours), 24 * 365)),
+            from_id=from_id,
+            to_id=to_id,
+        )
+        payload["project"] = _project_payload(resolved)
+        return {"ok": True, **_json_safe(payload)}
     except Exception as exc:
         return {"ok": False, "error": _error_payload(exc)}
 
