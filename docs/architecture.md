@@ -129,6 +129,14 @@ Neo4j label in one shot. The old slug is preserved as an alias so
 existing `.gpc.yaml` files, links and prior runs keep resolving to the
 renamed project.
 
+An unwanted project is removed with `gpc project delete <slug> --yes`.
+It cascade-drops every `gpc_*` row, deletes Qdrant points filtered by
+`project_slug`, detaches every slug-bearing node from Neo4j, and by
+default wipes the GPC-managed hooks and `.gpc/` / `.gpc.yaml` files from
+every registered repo root so the project cannot silently reappear via a
+post-commit projection. Non-GPC hooks are left alone and reported so
+operators can decide what to do with them.
+
 Neo4j remains a rebuildable read model; Postgres is the source of truth. Use
 `gpc graph-reset --yes [--rebuild]` to wipe the projection and rebuild it
 from Postgres, and `gpc reset --yes` for a nuclear reset across all three
