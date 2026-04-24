@@ -189,17 +189,33 @@ def resolve_project(
     cwd: str | Path | None = None,
     project: str | None = None,
 ) -> dict[str, Any]:
+    """Resolve a project following the documented priority order.
+
+    Order (matches ``docs/architecture.md#project-resolution``):
+        1. Explicit ``project`` slug or alias passed by the caller.
+        2. ``cwd`` matched against registered project / repo roots
+           (longest-prefix wins; repos checked first, then project roots).
+        3. ``.gpc.yaml`` discovered by walking up from ``cwd``.
+
+    Priority #1 before #2 is the important invariant. When an MCP client
+    passes ``project="alugafacil"`` from a shell that happens to live in
+    a different project's directory, the explicit slug must win — otherwise
+    the resolver silently talks to the wrong project and the client can't
+    override it without also passing a synthetic ``cwd``. ``resolve_repo``
+    already obeyed this order; this brings ``resolve_project`` in line.
+    """
+
     with connect() as conn:
+        if project:
+            match = _resolve_by_slug_or_alias(conn, project)
+            match["resolution_input"] = "project"
+            return match
+
         if cwd is not None:
             match = _resolve_by_cwd(conn, cwd)
             if match:
                 match["resolution_reason"] = "cwd"
                 return match
-
-        if project:
-            match = _resolve_by_slug_or_alias(conn, project)
-            match["resolution_input"] = "project"
-            return match
 
         if cwd is not None:
             config = find_gpc_config(cwd)

@@ -396,6 +396,17 @@ def index_project_path(
                 skipped_reasons[result.reason or "skipped"] += 1
 
         files_skipped = sum(skipped_reasons.values())
+
+        # Light-weight GPC-side entity/relation extraction. Populates
+        # gpc_entities/gpc_relations so project_graph_to_neo4j has real
+        # content to project beyond (:GPCProject)-[:OWNS_REPO]->(:GPCRepo).
+        try:
+            from gpc.entity_extractor import extract_for_project
+
+            extract_for_project(str(project["id"]), project["slug"])
+        except Exception as exc:  # noqa: BLE001 — never block the index run
+            errors.append(f"entity_extractor: {exc}")
+
         stats = IndexStats(
             project_slug=project["slug"],
             project_id=str(project["id"]),

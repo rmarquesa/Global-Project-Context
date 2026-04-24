@@ -19,6 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from gpc.cross_repo import is_generic_label
 from gpc.graph import neo4j_driver
 
 
@@ -103,9 +104,15 @@ def graph_neighbors(
             start_record = session.run(
                 """
                 MATCH (n:GraphifyNode {project_slug: $slug})
-                WHERE n.id = $q OR toLower(n.label) CONTAINS toLower($q)
+                WHERE n.id = $q
+                   OR toLower(n.label) CONTAINS toLower($q)
+                   OR toLower(coalesce(n.source_file, '')) = toLower($q)
                 RETURN n
-                ORDER BY CASE WHEN n.id = $q THEN 0 ELSE 1 END,
+                ORDER BY CASE
+                             WHEN n.id = $q THEN 0
+                             WHEN toLower(coalesce(n.source_file, '')) = toLower($q) THEN 1
+                             ELSE 2
+                         END,
                          size(n.label), n.id
                 LIMIT 1
                 """,
@@ -265,7 +272,12 @@ def graph_summary(
                 slug=project_slug,
             ).data()
 
-            gods = session.run(
+            # Fetch 3x top_k so we can split between "central" (distinctive
+            # labels that reflect real architectural hubs) and "utility_hub"
+            # (generic labels like `run()`, `main()`, `connect()` that earn
+            # high degree by being dispatch/bootstrap code). Callers get both
+            # buckets and can decide which one to show the model.
+            candidates = session.run(
                 """
                 MATCH (n:GraphifyNode {project_slug: $slug})
                 WITH n, size([(n)--() | 1]) AS degree
@@ -277,8 +289,20 @@ def graph_summary(
                 LIMIT $top_k
                 """,
                 slug=project_slug,
-                top_k=top_k_gods,
+                top_k=top_k_gods * 3,
             ).data()
+            gods_central: list[dict[str, Any]] = []
+            gods_utility: list[dict[str, Any]] = []
+            for row in candidates:
+                target = gods_utility if is_generic_label(row.get("label")) else gods_central
+                if len(target) < top_k_gods:
+                    target.append(row)
+                if len(gods_central) >= top_k_gods and len(gods_utility) >= top_k_gods:
+                    break
+            # Keep the original ``god_nodes`` field (now the "central" list)
+            # for backwards compatibility with existing callers; expose the
+            # utility list as ``utility_hubs`` alongside.
+            gods = gods_central
 
             bridges = session.run(
                 """
@@ -341,6 +365,7 @@ def graph_summary(
         "found": True,
         "repos": repos,
         "god_nodes": gods,
+        "utility_hubs": gods_utility,
         "cross_repo_bridges": bridges,
         "relation_mix": relation_mix,
         "communities": cohesion_rows,
@@ -353,6 +378,99 @@ def _has_apoc(session) -> bool:
         return True
     except Exception:
         return False
+
+
+def graph_community(
+    project_slug: str,
+    community_id: int,
+    *,
+    top_members: int = 20,
+    top_external_bridges: int = 10,
+) -> dict[str, Any]:
+    """Drill into one Graphify community: members, repos, external reach.
+
+    Communities come from Graphify's own clustering (``GraphifyNode.community``
+    is the community id within the repo). For a full-project view we report:
+
+    * a sample of the most-connected members, sorted by degree;
+    * the repos that participate and how many nodes each contributes;
+    * cross-community edges (both `GRAPHIFY_RELATION` and `CROSS_REPO_BRIDGE`)
+      so the caller can see how the community talks to the rest of the graph.
+    """
+
+    if not project_slug:
+        raise ValueError("project_slug is required")
+
+    with neo4j_driver() as driver:
+        with driver.session() as session:
+            meta = session.run(
+                """
+                MATCH (n:GraphifyNode {project_slug: $slug, community: $cid})
+                RETURN count(n) AS total,
+                       collect(DISTINCT n.repo_slug) AS repos
+                """,
+                slug=project_slug, cid=community_id,
+            ).single()
+            if not meta or (meta["total"] or 0) == 0:
+                return {
+                    "project_slug": project_slug,
+                    "community_id": community_id,
+                    "found": False,
+                }
+
+            members = session.run(
+                """
+                MATCH (n:GraphifyNode {project_slug: $slug, community: $cid})
+                WITH n, size([(n)--() | 1]) AS degree
+                RETURN n.id AS id, n.label AS label, n.repo_slug AS repo,
+                       n.file_type AS file_type, n.source_file AS source_file,
+                       degree
+                ORDER BY degree DESC, label ASC
+                LIMIT $limit
+                """,
+                slug=project_slug, cid=community_id, limit=top_members,
+            ).data()
+
+            repo_breakdown = session.run(
+                """
+                MATCH (n:GraphifyNode {project_slug: $slug, community: $cid})
+                RETURN n.repo_slug AS repo, count(*) AS nodes
+                ORDER BY nodes DESC
+                """,
+                slug=project_slug, cid=community_id,
+            ).data()
+
+            external = session.run(
+                """
+                MATCH (n:GraphifyNode {project_slug: $slug, community: $cid})
+                      -[r:GRAPHIFY_RELATION|CROSS_REPO_BRIDGE]-
+                      (other:GraphifyNode {project_slug: $slug})
+                WHERE other.community IS NULL OR other.community <> $cid
+                RETURN type(r) AS relation,
+                       r.confidence AS confidence,
+                       r.confidence_score AS confidence_score,
+                       r.rule AS rule,
+                       n.label AS from_label,
+                       n.repo_slug AS from_repo,
+                       other.label AS to_label,
+                       other.repo_slug AS to_repo,
+                       other.community AS to_community
+                ORDER BY coalesce(r.confidence_score, 0.0) DESC
+                LIMIT $limit
+                """,
+                slug=project_slug, cid=community_id, limit=top_external_bridges,
+            ).data()
+
+    return {
+        "project_slug": project_slug,
+        "community_id": community_id,
+        "found": True,
+        "size": int(meta["total"] or 0),
+        "repos": [r for r in (meta["repos"] or []) if r],
+        "repo_breakdown": repo_breakdown,
+        "members": members,
+        "external_bridges": external,
+    }
 
 
 def graph_path(

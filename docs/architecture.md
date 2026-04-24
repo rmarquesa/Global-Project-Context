@@ -210,7 +210,7 @@ explicit and inspectable.
 
 ## MCP Surface
 
-The current server exposes thirteen read-only tools across four surfaces:
+The current server exposes fourteen read-only tools across four surfaces:
 
 - **Identity / discovery** — `gpc.health`, `gpc.resolve_project`,
   `gpc.resolve_repo`, `gpc.list_projects`, `gpc.list_repos`,
@@ -219,9 +219,12 @@ The current server exposes thirteen read-only tools across four surfaces:
   `gpc.estimate_token_savings`. These run over Qdrant embeddings and accept
   an optional `repo` filter.
 - **Structural queries** — `gpc.graph_neighbors`, `gpc.graph_summary`,
-  `gpc.graph_path`. These read the Neo4j Graphify projection and expose
-  `confidence` on every edge; by default only `EXTRACTED` edges are
-  returned.
+  `gpc.graph_path`, `gpc.graph_community`. These read the Neo4j Graphify
+  projection and expose `confidence` on every edge; by default only
+  `EXTRACTED` edges are returned. `graph_summary` splits god nodes into
+  `god_nodes` (distinctive, likely architectural hubs) and `utility_hubs`
+  (generic bootstrap/dispatch names like `run()` / `main()` / `connect()`)
+  so the caller can ignore the second bucket without losing the signal.
 - **Observability** — `gpc.mcp_usage`. Surfaces the server's own call log
   (every tool call writes one row to `gpc_mcp_calls`) so operators can
   confirm that AI clients are actually hitting the server.
