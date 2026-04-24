@@ -210,7 +210,7 @@ explicit and inspectable.
 
 ## MCP Surface
 
-The current server exposes twelve read-only tools across three surfaces:
+The current server exposes thirteen read-only tools across four surfaces:
 
 - **Identity / discovery** — `gpc.health`, `gpc.resolve_project`,
   `gpc.resolve_repo`, `gpc.list_projects`, `gpc.list_repos`,
@@ -222,6 +222,9 @@ The current server exposes twelve read-only tools across three surfaces:
   `gpc.graph_path`. These read the Neo4j Graphify projection and expose
   `confidence` on every edge; by default only `EXTRACTED` edges are
   returned.
+- **Observability** — `gpc.mcp_usage`. Surfaces the server's own call log
+  (every tool call writes one row to `gpc_mcp_calls`) so operators can
+  confirm that AI clients are actually hitting the server.
 
 Tool inputs, semantics and client setup are documented in
 [mcp-clients.md](mcp-clients.md).

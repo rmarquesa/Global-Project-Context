@@ -48,6 +48,31 @@ Expansões naturais que ficam na Fase 2:
 - [ ] Parâmetro `relations` aceitar regex ou incluir relações GPC-side
       (`OWNS_ENTITY`, `GPC_RELATION`) quando elas começarem a existir.
 
+## Fase 1.7 — Observabilidade do MCP (entregue)
+
+**Entregue em 2026-04-24.** Cada chamada ao MCP agora é auditável — responde
+à pergunta prática "minhas ferramentas de IA estão de fato usando o GPC?".
+
+- [x] Migration `0006_mcp_call_log.sql` cria `gpc_mcp_calls` (tool, project,
+      client, cwd, duration_ms, success, args/result_meta jsonb).
+- [x] [gpc/mcp_observability.py](../gpc/mcp_observability.py) define o
+      decorator `@log_mcp_call` que envolve cada tool. Nunca levanta: se o
+      Postgres estiver indisponível, loga em stderr e libera a resposta.
+- [x] Todos os 13 tools decorados. Novo tool `gpc.mcp_usage(window_hours)`
+      agrega o log em totais / por tool / por client / por projeto.
+- [x] Smoke test [tests/smoke/mcp_observability_smoke_test.py](../tests/smoke/mcp_observability_smoke_test.py)
+      valida que tools deixam rastro auditável e se limpa depois.
+- [x] Docs: seção "Auditing MCP Usage" em [docs/mcp-clients.md](mcp-clients.md)
+      e nota em [docs/token-economy.md](token-economy.md) sobre baseline
+      otimista vs economia realista (30–97% dependendo do tipo de pergunta).
+
+Gaps naturais (próxima iteração de observabilidade):
+- [ ] Hook em clients oficiais para preencher `GPC_MCP_CLIENT` (hoje só
+      clientes que setam variáveis próprias — Claude Code, Codex, Copilot —
+      são identificados automaticamente).
+- [ ] Job de retenção (`DELETE FROM gpc_mcp_calls WHERE called_at < now() -
+      interval '30 days'`) documentado como cron exemplo.
+
 ## Fase 1 (original) — Grafo estrutural acessível pelo MCP (opt-in)
 
 **Objetivo.** Dar ao modelo acesso a perguntas estruturais que o retrieval

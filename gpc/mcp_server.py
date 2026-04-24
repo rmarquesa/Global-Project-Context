@@ -27,6 +27,7 @@ from gpc.graph_query import (
     graph_path,
     graph_summary,
 )
+from gpc.mcp_observability import log_mcp_call
 from gpc.registry import list_projects, list_repos, resolve_project, resolve_repo
 from gpc.search import compose_project_context, search_project_context
 from gpc.status import get_index_status
@@ -49,6 +50,7 @@ mcp = FastMCP(
 
 
 @mcp.tool(name="gpc.health")
+@log_mcp_call("gpc.health")
 def health() -> dict[str, Any]:
     """Check whether GPC backing services are reachable."""
     checks: dict[str, Any] = {}
@@ -88,6 +90,7 @@ def health() -> dict[str, Any]:
 
 
 @mcp.tool(name="gpc.resolve_project")
+@log_mcp_call("gpc.resolve_project")
 def mcp_resolve_project(
     cwd: str | None = None,
     project: str | None = None,
@@ -101,6 +104,7 @@ def mcp_resolve_project(
 
 
 @mcp.tool(name="gpc.list_projects")
+@log_mcp_call("gpc.list_projects")
 def mcp_list_projects() -> dict[str, Any]:
     """List projects registered in GPC."""
     try:
@@ -119,6 +123,7 @@ def mcp_list_projects() -> dict[str, Any]:
 
 
 @mcp.tool(name="gpc.list_repos")
+@log_mcp_call("gpc.list_repos")
 def mcp_list_repos(project: str | None = None, cwd: str | None = None) -> dict[str, Any]:
     """List repositories under a project. Pass cwd to auto-resolve the project."""
     try:
@@ -132,6 +137,7 @@ def mcp_list_repos(project: str | None = None, cwd: str | None = None) -> dict[s
 
 
 @mcp.tool(name="gpc.resolve_repo")
+@log_mcp_call("gpc.resolve_repo")
 def mcp_resolve_repo(
     cwd: str | None = None,
     project: str | None = None,
@@ -156,6 +162,7 @@ def mcp_resolve_repo(
 
 
 @mcp.tool(name="gpc.index_status")
+@log_mcp_call("gpc.index_status")
 def mcp_index_status(
     project: str | None = None,
     cwd: str | None = None,
@@ -171,6 +178,7 @@ def mcp_index_status(
 
 
 @mcp.tool(name="gpc.search")
+@log_mcp_call("gpc.search")
 def mcp_search(
     query: str,
     project: str | None = None,
@@ -209,6 +217,7 @@ def mcp_search(
 
 
 @mcp.tool(name="gpc.context")
+@log_mcp_call("gpc.context")
 def mcp_context(
     query: str,
     project: str | None = None,
@@ -247,6 +256,7 @@ def mcp_context(
 
 
 @mcp.tool(name="gpc.graph_neighbors")
+@log_mcp_call("gpc.graph_neighbors")
 def mcp_graph_neighbors(
     node: str,
     project: str | None = None,
@@ -286,6 +296,7 @@ def mcp_graph_neighbors(
 
 
 @mcp.tool(name="gpc.graph_summary")
+@log_mcp_call("gpc.graph_summary")
 def mcp_graph_summary(
     project: str | None = None,
     cwd: str | None = None,
@@ -312,6 +323,7 @@ def mcp_graph_summary(
 
 
 @mcp.tool(name="gpc.graph_path")
+@log_mcp_call("gpc.graph_path")
 def mcp_graph_path(
     a: str,
     b: str,
@@ -346,7 +358,117 @@ def mcp_graph_path(
         return {"ok": False, "error": _error_payload(exc)}
 
 
+@mcp.tool(name="gpc.mcp_usage")
+@log_mcp_call("gpc.mcp_usage")
+def mcp_usage(
+    window_hours: int = 24,
+    project: str | None = None,
+    cwd: str | None = None,
+) -> dict[str, Any]:
+    """Report MCP tool-call activity over a time window.
+
+    Use this to confirm that AI clients are actually hitting GPC instead of
+    bypassing it with grep / Read. Every other tool logs one row to
+    ``gpc_mcp_calls``; this tool aggregates that log.
+    """
+    try:
+        safe_window = max(1, min(int(window_hours), 720))
+        resolved = None
+        if project or cwd:
+            resolved = resolve_project(project=project, cwd=_effective_cwd(cwd) if cwd else None)
+        with psycopg.connect(POSTGRES_DSN) as conn:
+            with conn.cursor() as cur:
+                totals_row = conn.execute(
+                    """
+                    select
+                        count(*) as total,
+                        count(*) filter (where success) as ok,
+                        count(*) filter (where not success) as failed,
+                        count(distinct client_name) filter (where client_name is not null) as clients,
+                        min(called_at) as first_call,
+                        max(called_at) as last_call
+                    from gpc_mcp_calls
+                    where called_at > now() - (%s::text || ' hours')::interval
+                      and (%s::uuid is null or project_id = %s::uuid)
+                    """,
+                    (
+                        str(safe_window),
+                        str(resolved["id"]) if resolved else None,
+                        str(resolved["id"]) if resolved else None,
+                    ),
+                ).fetchone()
+                by_tool = conn.execute(
+                    """
+                    select tool, count(*) as calls,
+                           count(*) filter (where not success) as errors,
+                           avg(duration_ms)::int as avg_ms
+                    from gpc_mcp_calls
+                    where called_at > now() - (%s::text || ' hours')::interval
+                      and (%s::uuid is null or project_id = %s::uuid)
+                    group by tool
+                    order by calls desc
+                    """,
+                    (
+                        str(safe_window),
+                        str(resolved["id"]) if resolved else None,
+                        str(resolved["id"]) if resolved else None,
+                    ),
+                ).fetchall()
+                by_client = conn.execute(
+                    """
+                    select coalesce(client_name, 'unknown') as client,
+                           count(*) as calls
+                    from gpc_mcp_calls
+                    where called_at > now() - (%s::text || ' hours')::interval
+                      and (%s::uuid is null or project_id = %s::uuid)
+                    group by 1 order by calls desc
+                    """,
+                    (
+                        str(safe_window),
+                        str(resolved["id"]) if resolved else None,
+                        str(resolved["id"]) if resolved else None,
+                    ),
+                ).fetchall()
+                by_project = conn.execute(
+                    """
+                    select coalesce(project_slug, 'unresolved') as project,
+                           count(*) as calls
+                    from gpc_mcp_calls
+                    where called_at > now() - (%s::text || ' hours')::interval
+                    group by 1 order by calls desc
+                    """,
+                    (str(safe_window),),
+                ).fetchall()
+        totals = {
+            "total": (totals_row[0] if totals_row else 0) or 0,
+            "ok": (totals_row[1] if totals_row else 0) or 0,
+            "failed": (totals_row[2] if totals_row else 0) or 0,
+            "distinct_clients": (totals_row[3] if totals_row else 0) or 0,
+            "first_call": str(totals_row[4]) if totals_row and totals_row[4] else None,
+            "last_call": str(totals_row[5]) if totals_row and totals_row[5] else None,
+        }
+        return {
+            "ok": True,
+            "window_hours": safe_window,
+            "project_filter": resolved["slug"] if resolved else None,
+            "totals": totals,
+            "by_tool": [
+                {"tool": row[0], "calls": row[1], "errors": row[2], "avg_ms": row[3]}
+                for row in by_tool
+            ],
+            "by_client": [
+                {"client": row[0], "calls": row[1]} for row in by_client
+            ],
+            "by_project": [
+                {"project": row[0], "calls": row[1]} for row in by_project
+            ],
+        }
+    except Exception as exc:
+        return {"ok": False, "error": _error_payload(exc)}
+
+
 @mcp.tool(name="gpc.estimate_token_savings")
+@log_mcp_call("gpc.estimate_token_savings")
 def mcp_estimate_token_savings(
     query: str,
     project: str | None = None,

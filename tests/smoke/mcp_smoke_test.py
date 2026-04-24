@@ -38,6 +38,7 @@ async def main() -> None:
                 "gpc.graph_neighbors",
                 "gpc.graph_summary",
                 "gpc.graph_path",
+                "gpc.mcp_usage",
             }
             missing = sorted(expected - set(names))
             if missing:
@@ -199,6 +200,17 @@ async def main() -> None:
             path_payload = _json_payload(path_result)
             if not path_payload.get("ok"):
                 raise SystemExit(f"graph_path failed: {path_payload}")
+
+            usage = await session.call_tool(
+                "gpc.mcp_usage",
+                {"window_hours": 1},
+            )
+            usage_payload = _json_payload(usage)
+            if not usage_payload.get("ok"):
+                raise SystemExit(f"mcp_usage failed: {usage_payload}")
+            # The calls we just made should show up in the aggregate.
+            if usage_payload.get("totals", {}).get("total", 0) < 1:
+                raise SystemExit(f"mcp_usage reported no calls: {usage_payload}")
 
             print(f"tools={','.join(names)}")
             print("mcp_smoke_test=passed")
