@@ -10,7 +10,7 @@ from qdrant_client.models import FieldCondition, Filter, MatchValue
 
 from gpc.config import COLLECTION_NAME, POSTGRES_DSN, QDRANT_HOST, QDRANT_PORT
 from gpc.embeddings import embed_texts
-from gpc.registry import resolve_project
+from gpc.registry import normalize_slug, resolve_project
 
 
 @dataclass(frozen=True)
@@ -22,6 +22,7 @@ class SearchResult:
     content: str
     chunk_type: str
     language: str | None
+    repo_slug: str | None = None
 
 
 def search_project_context(
@@ -30,43 +31,58 @@ def search_project_context(
     project: str | None = None,
     cwd: str | None = None,
     limit: int = 5,
+    repo: str | list[str] | None = None,
 ) -> tuple[dict[str, Any], list[SearchResult]]:
     resolved_project = resolve_project(project=project, cwd=cwd)
     batch = embed_texts([query])
+
+    must = [
+        FieldCondition(
+            key="project_id",
+            match=MatchValue(value=str(resolved_project["id"])),
+        ),
+        FieldCondition(
+            key="source_type",
+            match=MatchValue(value="project_file"),
+        ),
+    ]
+
+    if repo:
+        from qdrant_client.models import MatchAny
+
+        repo_slugs = [repo] if isinstance(repo, str) else list(repo)
+        normalized = [normalize_slug(r) for r in repo_slugs if r]
+        if normalized:
+            must.append(
+                FieldCondition(
+                    key="repo_slug",
+                    match=MatchAny(any=normalized),
+                )
+            )
 
     qdrant = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT)
     response = qdrant.query_points(
         collection_name=COLLECTION_NAME,
         query=batch.vectors[0],
-        query_filter=Filter(
-            must=[
-                FieldCondition(
-                    key="project_id",
-                    match=MatchValue(value=str(resolved_project["id"])),
-                ),
-                FieldCondition(
-                    key="source_type",
-                    match=MatchValue(value="project_file"),
-                ),
-            ]
-        ),
+        query_filter=Filter(must=must),
         limit=max(limit * 3, limit),
         with_payload=True,
     )
 
-    scored_ids: list[tuple[str, float]] = []
+    scored_ids: list[tuple[str, float, str | None]] = []
     for point in response.points:
-        chunk_id = (point.payload or {}).get("chunk_id")
+        payload = point.payload or {}
+        chunk_id = payload.get("chunk_id")
         if chunk_id:
-            scored_ids.append((chunk_id, point.score))
+            scored_ids.append((chunk_id, point.score, payload.get("repo_slug")))
 
     if not scored_ids:
         return resolved_project, []
 
-    chunks = _fetch_chunks([chunk_id for chunk_id, _ in scored_ids])
+    chunks = _fetch_chunks([chunk_id for chunk_id, _, _ in scored_ids])
     chunk_by_id = {str(chunk["id"]): chunk for chunk in chunks}
     results = []
-    for chunk_id, score in scored_ids:
+    for chunk_id, score, repo_slug in scored_ids:
         chunk = chunk_by_id.get(chunk_id)
         if not chunk:
             continue
@@ -79,6 +95,7 @@ def search_project_context(
                 content=chunk["content"],
                 chunk_type=chunk["chunk_type"],
                 language=chunk["language"],
+                repo_slug=chunk.get("repo_slug") or repo_slug,
             )
         )
         if len(results) >= limit:
@@ -94,6 +111,7 @@ def compose_project_context(
     cwd: str | None = None,
     max_chunks: int = 5,
     max_chars: int = 6_000,
+    repo: str | list[str] | None = None,
 ) -> tuple[dict[str, Any], list[SearchResult], str]:
     chunk_limit = max(1, min(max_chunks, 20))
     char_budget = max(1_000, min(max_chars, 30_000))
@@ -102,6 +120,7 @@ def compose_project_context(
         project=project,
         cwd=cwd,
         limit=chunk_limit,
+        repo=repo,
     )
 
     header = [
@@ -142,9 +161,11 @@ def _fetch_chunks(chunk_ids: list[str]) -> list[dict[str, Any]]:
                 c.content,
                 c.chunk_type,
                 f.relative_path,
-                f.language
+                f.language,
+                r.slug as repo_slug
             from gpc_chunks c
             left join gpc_files f on f.id = c.file_id
+            left join gpc_repos r on r.id = coalesce(c.repo_id, f.repo_id)
             where c.id = any(%s::uuid[])
             """,
             (chunk_ids,),
