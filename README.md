@@ -57,6 +57,7 @@ admin modules live under `scripts/`. Smoke tests live under `tests/smoke/`.
 - [Token economy](docs/token-economy.md) — what GPC saves and how it is measured.
 - [Quickstart with 3 projects](docs/quickstart-3-projects.md) — multi-repo example.
 - [Scripts](docs/scripts.md) — package and command inventory.
+- [Roadmap](docs/roadmap.md) — planned MCP graph tools, multi-project audit, and auto-research loop.
 
 Contributor and security notes live in [CONTRIBUTING.md](CONTRIBUTING.md) and
 [SECURITY.md](SECURITY.md). Landing page source lives in [site/](site/).
@@ -351,19 +352,25 @@ Setup steps, environment variables and Cypher examples live in
 
 ## MCP Tools
 
-The MCP server exposes seven read-only tools:
+The MCP server exposes twelve read-only tools:
 
 - `gpc.health` — service availability.
 - `gpc.resolve_project` — look up a project by `cwd` or slug.
-- `gpc.list_projects` — list registered projects.
+- `gpc.resolve_repo` — look up a `(project, repo)` pair for multi-repo projects.
+- `gpc.list_projects` — list registered projects with their repos.
+- `gpc.list_repos` — list repos of a project.
 - `gpc.index_status` — files, chunks, Qdrant points and recent runs.
-- `gpc.search` — ranked semantic chunks for a query.
-- `gpc.context` — bounded context block ready for a prompt.
+- `gpc.search` — ranked semantic chunks for a query (accepts `repo` filter).
+- `gpc.context` — bounded context block ready for a prompt (accepts `repo` filter).
 - `gpc.estimate_token_savings` — measured saving for a query.
+- `gpc.graph_neighbors` — typed neighbours of a symbol in the Neo4j projection.
+- `gpc.graph_summary` — god nodes, repo breakdown, cross-repo bridges.
+- `gpc.graph_path` — shortest path between two symbols with typed hops.
 
 Pass `project` when you know the slug, or `cwd` when the client is operating
-inside a repository. Full descriptions and client setup live in
-[docs/mcp-clients.md](docs/mcp-clients.md).
+inside a repository. The `graph_*` tools default to `min_confidence="EXTRACTED"`
+so INFERRED heuristics (like cross-repo bridges) are opt-in. Full descriptions
+and client setup live in [docs/mcp-clients.md](docs/mcp-clients.md).
 
 ## Landing Page
 
