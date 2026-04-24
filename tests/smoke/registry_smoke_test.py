@@ -48,6 +48,18 @@ def main() -> None:
     by_alias = resolve_project(project="global-project-context")
     print(f"resolve_alias={by_alias['slug']} reason={by_alias['resolution_reason']}")
 
+    # Regression guard: when both `project` and `cwd` are provided and point
+    # at different registered projects, the explicit slug must win. This
+    # matches the priority order documented in docs/architecture.md and
+    # brings resolve_project in line with resolve_repo.
+    by_explicit = resolve_project(project="gpc", cwd="/tmp")
+    assert by_explicit["slug"] == "gpc", by_explicit
+    assert by_explicit.get("resolution_input") == "project", by_explicit
+    print(
+        f"resolve_explicit_wins={by_explicit['slug']} "
+        f"input={by_explicit.get('resolution_input')}"
+    )
+
 
 if __name__ == "__main__":
     main()

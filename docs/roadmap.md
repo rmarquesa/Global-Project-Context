@@ -42,11 +42,11 @@ topologia (quem toca quem) além das de semântica (o que parece com isso).
       e [README.md](../README.md) atualizados.
 
 Expansões naturais que ficam na Fase 2:
-- [ ] `gpc.graph_community` — retorna os nós de uma community com cohesion.
+- [x] `gpc.graph_community` — entregue em 2026-04-24.
 - [ ] `gpc.graph_diff` — diff estrutural entre duas projeções (útil para
       detectar drift após cada run).
 - [ ] Parâmetro `relations` aceitar regex ou incluir relações GPC-side
-      (`OWNS_ENTITY`, `GPC_RELATION`) quando elas começarem a existir.
+      (`OWNS_ENTITY`, `GPC_RELATION`) na camada `graph_neighbors`.
 
 ## Fase 1.7 — Observabilidade do MCP (entregue)
 
@@ -66,7 +66,38 @@ Expansões naturais que ficam na Fase 2:
       e nota em [docs/token-economy.md](token-economy.md) sobre baseline
       otimista vs economia realista (30–97% dependendo do tipo de pergunta).
 
-Gaps naturais (próxima iteração de observabilidade):
+## Fase 1.8 — Graph quality improvements (entregue)
+
+**Entregue em 2026-04-24.** Tornar o grafo e o retrieval mais úteis para
+agentes sem mexer na premissa boa: MCP read-only, confidence explícita,
+escritas via CLI/hooks.
+
+- [x] `graph_summary` separa `god_nodes` (central) de `utility_hubs`
+      (genéricos). No alugafacil, `fetch()` sai do topo de centrais e vira
+      utility; `passport.js`/`resolveSecret()`/`crypto.js` ficam como hubs
+      reais.
+- [x] Novo tool `gpc.graph_community(project, community_id)` expõe membros,
+      repos envolvidos e bridges externos de uma community. Permite
+      navegação após `graph_summary`.
+- [x] Regra `content_hash` em `build_bridges` via join com
+      `gpc_files.content_hash`. Roda primeiro (strongest signal) e as
+      regras posteriores skip pares já cobertos.
+- [x] [gpc/entity_extractor.py](../gpc/entity_extractor.py): MVP que
+      popula `gpc_entities` (type=file) + `gpc_relations` (type=imports,
+      INFERRED 0.75) a cada `index_project_path`. No alugafacil: 567
+      entities + 464 imports (same-repo; cross-repo não aparece porque
+      workers Cloudflare compartilham código por cópia, não import).
+- [x] [gpc/graph.py](../gpc/graph.py): `GPCEntity` agora fica ligado a
+      `(:GPCRepo)-[:OWNS_ENTITY]->(:GPCEntity)` também, não só ao projeto.
+- [x] Hybrid retrieval em `gpc.context(include_graph=true)`: anexa footer
+      com vizinhos Graphify de cada chunk, com `confidence` tagged.
+      Default `graph_min_confidence="EXTRACTED"`; INFERRED é opt-in.
+- [x] Smoke test
+      [tests/smoke/graph_quality_smoke_test.py](../tests/smoke/graph_quality_smoke_test.py)
+      cobrindo classificação de god nodes, `graph_community`, entity
+      extractor em projeto temporário.
+
+## Fase 1.7 gaps naturais (próxima iteração de observabilidade):
 - [ ] Hook em clients oficiais para preencher `GPC_MCP_CLIENT` (hoje só
       clientes que setam variáveis próprias — Claude Code, Codex, Copilot —
       são identificados automaticamente).
@@ -185,8 +216,9 @@ monorepo.
 Próximas evoluções naturais (ficam na Fase 2):
 - [ ] Regra `package_import` — parse de `package.json` / `import` statements
       para upgrade de INFERRED → EXTRACTED em casos com qualificação de pacote.
-- [ ] Regra `content_hash` — hash SHA do conteúdo do chunk para identificar
-      vendoring exato (aproveita `gpc_chunks.content_hash` do Postgres).
+- [x] Regra `content_hash` — entregue em 2026-04-24 (INFERRED 0.95). No
+      alugafacil ainda não captura sinal porque cada worker tem sua própria
+      implementação de `crypto.js`; fica útil quando há vendoring bit-a-bit.
 
 ## Fase 2 — Multi-projeto (Cloudflare backend + frontend + database)
 

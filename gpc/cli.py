@@ -253,8 +253,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--rule",
         dest="rules",
         action="append",
-        choices=("same_source_file", "same_code_symbol", "same_generic_symbol"),
-        help="Bridging rule to apply. Repeatable. Default: same_source_file + same_code_symbol.",
+        choices=(
+            "content_hash",
+            "same_source_file",
+            "same_code_symbol",
+            "same_generic_symbol",
+        ),
+        help="Bridging rule to apply. Repeatable. Default: content_hash + same_source_file + same_code_symbol.",
     )
     bridge_parser.add_argument(
         "--include-ambiguous",

@@ -112,7 +112,19 @@ def compose_project_context(
     max_chunks: int = 5,
     max_chars: int = 6_000,
     repo: str | list[str] | None = None,
+    include_graph: bool = False,
+    graph_min_confidence: str = "EXTRACTED",
 ) -> tuple[dict[str, Any], list[SearchResult], str]:
+    """Compose a bounded context block from semantic retrieval.
+
+    When ``include_graph=True`` and the project has a Graphify projection in
+    Neo4j, each retrieved chunk is augmented with a short structural footer
+    listing its immediate neighbours in the graph (callers/callees, same-file
+    bridges). The footer is *appended* to the chunk without changing the
+    ranking, so hybrid mode never hides evidence. Confidence on neighbours is
+    exposed explicitly.
+    """
+
     chunk_limit = max(1, min(max_chunks, 20))
     char_budget = max(1_000, min(max_chars, 30_000))
     resolved_project, results = search_project_context(
@@ -122,6 +134,14 @@ def compose_project_context(
         limit=chunk_limit,
         repo=repo,
     )
+
+    graph_notes_by_index: dict[int, str] = {}
+    if include_graph and results:
+        graph_notes_by_index = _graph_annotations(
+            project_slug=resolved_project["slug"],
+            results=results,
+            min_confidence=graph_min_confidence,
+        )
 
     header = [
         f"Project: {resolved_project['slug']} ({resolved_project['name']})",
@@ -138,17 +158,76 @@ def compose_project_context(
             f"(score={result.score:.4f}, type={result.chunk_type})"
         )
         content = result.content.strip()
-        block_budget = max(0, remaining - len(source_header) - 2)
+        footer = graph_notes_by_index.get(index, "")
+        overhead = len(source_header) + 2 + (len(footer) + 2 if footer else 0)
+        block_budget = max(0, remaining - overhead)
         if block_budget <= 0:
             break
         if len(content) > block_budget:
             content = f"{content[: max(0, block_budget - 3)].rstrip()}..."
 
         block = f"{source_header}\n{content}"
+        if footer:
+            block = f"{block}\n{footer}"
         parts.append(block)
         remaining -= len(block) + 1
 
     return resolved_project, results, "\n".join(parts).strip()
+
+
+def _graph_annotations(
+    *,
+    project_slug: str,
+    results: list[SearchResult],
+    min_confidence: str,
+) -> dict[int, str]:
+    """Look up Graphify neighbours for each retrieved chunk's source file.
+
+    Never raise — if Neo4j is unreachable or the projection is missing, this
+    function returns an empty map and the caller falls back to pure semantic
+    retrieval.
+    """
+
+    try:
+        from gpc.graph_query import graph_neighbors
+    except Exception:  # noqa: BLE001
+        return {}
+
+    out: dict[int, str] = {}
+    seen_source_files: set[tuple[str | None, str]] = set()
+    for index, result in enumerate(results, start=1):
+        key = (result.repo_slug, result.relative_path)
+        if key in seen_source_files:
+            continue
+        seen_source_files.add(key)
+        query_term = result.relative_path
+        try:
+            data = graph_neighbors(
+                project_slug,
+                query_term,
+                depth=1,
+                min_confidence=min_confidence,
+                limit=5,
+            )
+        except Exception:  # noqa: BLE001
+            continue
+        neighbors = data.get("neighbors") or []
+        if not neighbors:
+            continue
+        lines = ["  Graph neighbours (confidence tagged):"]
+        for neighbor in neighbors:
+            edge = (neighbor.get("edges") or [{}])[0]
+            relation = edge.get("relation", "?")
+            conf = edge.get("confidence") or "EXTRACTED"
+            rule = edge.get("rule")
+            rule_tag = f" via {rule}" if rule else ""
+            lines.append(
+                f"    - [{neighbor.get('repo_slug')}] "
+                f"{neighbor.get('label')} "
+                f"({relation}{rule_tag}, {conf})"
+            )
+        out[index] = "\n".join(lines)
+    return out
 
 
 def _fetch_chunks(chunk_ids: list[str]) -> list[dict[str, Any]]:

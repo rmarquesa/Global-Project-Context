@@ -38,6 +38,7 @@ async def main() -> None:
                 "gpc.graph_neighbors",
                 "gpc.graph_summary",
                 "gpc.graph_path",
+                "gpc.graph_community",
                 "gpc.mcp_usage",
             }
             missing = sorted(expected - set(names))
@@ -51,9 +52,9 @@ async def main() -> None:
 
             # Pick the first project that has both repos and chunks — this
             # isolates the smoke from projects created by other tests that
-            # were never indexed. `resolve_project` prefers cwd over the
-            # explicit slug so we accept whatever comes back, as long as it
-            # matches something registered.
+            # were never indexed. Explicit ``project`` wins over cwd per
+            # the documented priority order, so we can rely on the slug
+            # alone without having to thread a fake cwd through every call.
             projects = await session.call_tool("gpc.list_projects", {})
             projects_payload = _json_payload(projects)
             registered = [p for p in projects_payload.get("projects", [])]
@@ -62,24 +63,21 @@ async def main() -> None:
 
             probe_slug = None
             probe_cwd = None
-            # Walk each candidate, use the first repo as cwd so cwd-based
-            # resolution picks the right project on the server side.
             for candidate in registered:
                 slug = candidate.get("slug")
                 repos = candidate.get("repos") or []
                 if not repos:
                     continue
-                candidate_cwd = repos[0].get("root_path")
-                if not candidate_cwd:
-                    continue
                 status = await session.call_tool(
                     "gpc.index_status",
-                    {"project": slug, "cwd": candidate_cwd, "runs": 1},
+                    {"project": slug, "runs": 1},
                 )
                 status_payload = _json_payload(status)
                 if status_payload.get("status", {}).get("chunks", 0) >= 1:
                     probe_slug = slug
-                    probe_cwd = candidate_cwd
+                    # Keep a real cwd handy for the `resolve_repo` probe
+                    # that validates repo-level resolution end-to-end.
+                    probe_cwd = repos[0].get("root_path")
                     break
             if not probe_slug:
                 raise SystemExit(
@@ -88,16 +86,40 @@ async def main() -> None:
 
             resolved = await session.call_tool(
                 "gpc.resolve_project",
-                {"project": probe_slug, "cwd": probe_cwd},
+                {"project": probe_slug},
             )
             resolved_payload = _json_payload(resolved)
             resolved_slug = resolved_payload.get("project", {}).get("slug")
             if resolved_slug != probe_slug:
-                raise SystemExit(f"Project resolution failed: {resolved_payload}")
+                raise SystemExit(
+                    f"Explicit project slug {probe_slug!r} did not win resolution: {resolved_payload}"
+                )
+
+            # Regression guard: explicit project must beat a cwd pointing at
+            # *another* registered project. Pick the MCP server's own cwd
+            # (the GPC repo) as the "wrong" cwd. If the fix in
+            # resolve_project regresses, this assertion fails loudly.
+            other_project = next(
+                (p["slug"] for p in registered if p["slug"] != probe_slug),
+                None,
+            )
+            if other_project:
+                conflict = await session.call_tool(
+                    "gpc.resolve_project",
+                    {"project": probe_slug, "cwd": str(ROOT)},
+                )
+                conflict_payload = _json_payload(conflict)
+                conflict_slug = conflict_payload.get("project", {}).get("slug")
+                if conflict_slug != probe_slug:
+                    raise SystemExit(
+                        "resolve_project priority regression: explicit "
+                        f"project={probe_slug!r} was shadowed by cwd={ROOT!s} "
+                        f"→ resolved to {conflict_slug!r}"
+                    )
 
             repos = await session.call_tool(
                 "gpc.list_repos",
-                {"project": probe_slug, "cwd": probe_cwd},
+                {"project": probe_slug},
             )
             repos_payload = _json_payload(repos)
             if not repos_payload.get("repos"):
@@ -105,7 +127,7 @@ async def main() -> None:
 
             resolved_repo = await session.call_tool(
                 "gpc.resolve_repo",
-                {"project": probe_slug, "cwd": probe_cwd},
+                {"project": probe_slug},
             )
             resolved_repo_payload = _json_payload(resolved_repo)
             if resolved_repo_payload.get("project", {}).get("slug") != probe_slug:
@@ -113,7 +135,7 @@ async def main() -> None:
 
             status = await session.call_tool(
                 "gpc.index_status",
-                {"project": probe_slug, "cwd": probe_cwd, "runs": 1},
+                {"project": probe_slug, "runs": 1},
             )
             status_payload = _json_payload(status)
             if status_payload.get("status", {}).get("chunks", 0) < 1:
@@ -123,7 +145,6 @@ async def main() -> None:
                 "gpc.search",
                 {
                     "project": probe_slug,
-                    "cwd": probe_cwd,
                     "query": "authentication",
                     "limit": 2,
                     "content_chars": 300,
@@ -137,7 +158,6 @@ async def main() -> None:
                 "gpc.context",
                 {
                     "project": probe_slug,
-                    "cwd": probe_cwd,
                     "query": "authentication",
                     "max_chunks": 2,
                     "max_chars": 2_000,
@@ -151,7 +171,6 @@ async def main() -> None:
                 "gpc.estimate_token_savings",
                 {
                     "project": probe_slug,
-                    "cwd": probe_cwd,
                     "query": "authentication",
                     "max_chunks": 2,
                     "max_chars": 2_000,
@@ -165,7 +184,7 @@ async def main() -> None:
             # project has a Graphify projection in every environment.
             summary = await session.call_tool(
                 "gpc.graph_summary",
-                {"project": probe_slug, "cwd": probe_cwd, "top_k_gods": 3, "include_cohesion": False},
+                {"project": probe_slug, "top_k_gods": 3, "include_cohesion": False},
             )
             summary_payload = _json_payload(summary)
             if not summary_payload.get("ok"):
@@ -175,7 +194,6 @@ async def main() -> None:
                 "gpc.graph_neighbors",
                 {
                     "project": probe_slug,
-                    "cwd": probe_cwd,
                     "node": "main",
                     "depth": 1,
                     "min_confidence": "EXTRACTED",
@@ -190,7 +208,6 @@ async def main() -> None:
                 "gpc.graph_path",
                 {
                     "project": probe_slug,
-                    "cwd": probe_cwd,
                     "a": "main",
                     "b": "auth",
                     "max_hops": 4,

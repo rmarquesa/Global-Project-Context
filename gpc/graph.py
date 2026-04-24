@@ -201,7 +201,7 @@ def _fetch_repos() -> list[dict[str, Any]]:
 
 def _fetch_entities() -> list[dict[str, Any]]:
     with postgres_connect() as conn:
-        return conn.execute(
+        rows = conn.execute(
             """
             select
                 e.id::text as id,
@@ -210,17 +210,23 @@ def _fetch_entities() -> list[dict[str, Any]]:
                 e.entity_type,
                 e.external_ref,
                 e.description,
-                p.slug as project_slug
+                p.slug as project_slug,
+                (e.metadata->>'repo_id')::text as repo_id,
+                (e.metadata->>'repo_slug')::text as repo_slug,
+                (e.metadata->>'relative_path')::text as relative_path,
+                (e.metadata->>'language')::text as language,
+                (e.metadata->>'file_type')::text as file_type
             from gpc_entities e
             left join gpc_projects p on p.id = e.project_id
             order by e.name
             """
         ).fetchall()
+    return rows
 
 
 def _fetch_relations() -> list[dict[str, Any]]:
     with postgres_connect() as conn:
-        return conn.execute(
+        rows = conn.execute(
             """
             select
                 r.id::text as id,
@@ -234,6 +240,13 @@ def _fetch_relations() -> list[dict[str, Any]]:
             order by r.created_at, r.id
             """
         ).fetchall()
+    # Neo4j Bolt cannot encode Decimal — cast confidence to float eagerly.
+    from decimal import Decimal
+
+    for row in rows:
+        if isinstance(row.get("confidence"), Decimal):
+            row["confidence"] = float(row["confidence"])
+    return rows
 
 
 def _upsert_projects(tx, projects: list[dict[str, Any]]) -> None:
@@ -287,10 +300,21 @@ def _upsert_entities(tx, entities: list[dict[str, Any]]) -> None:
             e.description = entity.description,
             e.project_id = entity.project_id,
             e.project_slug = entity.project_slug,
+            e.repo_id = entity.repo_id,
+            e.repo_slug = entity.repo_slug,
+            e.relative_path = entity.relative_path,
+            e.language = entity.language,
+            e.file_type = entity.file_type,
             e.updated_at = datetime()
         with e, entity
         match (p:GPCProject {id: entity.project_id})
         merge (p)-[:OWNS_ENTITY]->(e)
+        with e, entity
+        // Also attach to the owning repo when the entity metadata points at one.
+        optional match (r:GPCRepo {id: entity.repo_id})
+        foreach (_ in case when r is null then [] else [1] end |
+            merge (r)-[:OWNS_ENTITY]->(e)
+        )
         """,
         entities=[entity for entity in entities if entity.get("project_id")],
     )

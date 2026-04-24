@@ -23,6 +23,7 @@ from gpc.config import (
 from gpc.embeddings import active_embedding_model, embedding_dimension
 from gpc.graph_query import (
     ALLOWED_CONFIDENCES,
+    graph_community,
     graph_neighbors,
     graph_path,
     graph_summary,
@@ -225,13 +226,28 @@ def mcp_context(
     max_chunks: int = 5,
     max_chars: int = 6_000,
     repo: str | list[str] | None = None,
+    include_graph: bool = False,
+    graph_min_confidence: str = "EXTRACTED",
 ) -> dict[str, Any]:
     """Return a bounded context block suitable for an AI model prompt.
 
     Pass ``repo`` (slug or list of slugs) to narrow the context to specific
     repositories of the project.
+
+    Set ``include_graph=True`` for *hybrid retrieval*: each retrieved chunk
+    is augmented with a short footer listing its immediate neighbours in the
+    Neo4j Graphify projection (callers, callees, cross-repo bridges). The
+    footer carries ``confidence`` on every neighbour so the model cannot
+    treat heuristics as fact. Default ``graph_min_confidence="EXTRACTED"``
+    keeps INFERRED neighbours out unless the caller opts in. If the graph is
+    unavailable the call silently falls back to pure semantic retrieval.
     """
     try:
+        if graph_min_confidence not in ALLOWED_CONFIDENCES:
+            raise ValueError(
+                f"graph_min_confidence must be one of {ALLOWED_CONFIDENCES}, "
+                f"got {graph_min_confidence!r}"
+            )
         resolved_project, results, context = compose_project_context(
             query,
             project=project,
@@ -239,12 +255,15 @@ def mcp_context(
             max_chunks=max_chunks,
             max_chars=max_chars,
             repo=repo,
+            include_graph=include_graph,
+            graph_min_confidence=graph_min_confidence,
         )
         return {
             "ok": True,
             "project": _project_payload(resolved_project),
             "query": query,
             "repo_filter": repo,
+            "include_graph": include_graph,
             "context": context,
             "sources": [
                 _search_result_payload(result, content_chars=0)
@@ -315,6 +334,34 @@ def mcp_graph_summary(
             resolved["slug"],
             top_k_gods=max(1, min(top_k_gods, 50)),
             include_cohesion=include_cohesion,
+        )
+        payload["project"] = _project_payload(resolved)
+        return {"ok": True, **payload}
+    except Exception as exc:
+        return {"ok": False, "error": _error_payload(exc)}
+
+
+@mcp.tool(name="gpc.graph_community")
+@log_mcp_call("gpc.graph_community")
+def mcp_graph_community(
+    community_id: int,
+    project: str | None = None,
+    cwd: str | None = None,
+    top_members: int = 20,
+    top_external_bridges: int = 10,
+) -> dict[str, Any]:
+    """Drill into one Graphify community: members, repos, external bridges.
+
+    Use after ``gpc.graph_summary`` when a community looks interesting and you
+    want to inspect its members and how it connects to the rest of the graph.
+    """
+    try:
+        resolved = resolve_project(project=project, cwd=_effective_cwd(cwd))
+        payload = graph_community(
+            resolved["slug"],
+            int(community_id),
+            top_members=max(1, min(int(top_members), 100)),
+            top_external_bridges=max(1, min(int(top_external_bridges), 50)),
         )
         payload["project"] = _project_payload(resolved)
         return {"ok": True, **payload}

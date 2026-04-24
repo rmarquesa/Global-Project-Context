@@ -9,7 +9,7 @@ installation, transport options and troubleshooting.
 
 ## MCP Tools
 
-The server exposes twelve read-only tools.
+The server exposes fourteen read-only tools.
 
 | Tool | Purpose | Key inputs |
 |---|---|---|
@@ -20,11 +20,12 @@ The server exposes twelve read-only tools.
 | `gpc.list_repos` | Lists repositories under a project. | `project`, `cwd` |
 | `gpc.index_status` | Returns indexed file count, chunk count, Qdrant point count and recent run summaries. | `cwd`, `project`, `runs` |
 | `gpc.search` | Returns ranked chunk hits for a semantic query, hydrated from Postgres. Pass `repo` to filter. | `query`, `cwd`/`project`, `limit`, `content_chars`, `repo` |
-| `gpc.context` | Returns one bounded context block ready to inject into a prompt. Pass `repo` to filter. | `query`, `cwd`/`project`, `max_chunks`, `max_chars`, `repo` |
+| `gpc.context` | Returns one bounded context block ready to inject into a prompt. Pass `repo` to filter; set `include_graph=true` for hybrid retrieval (each chunk gets a footer with neighbours + confidence from Neo4j). | `query`, `cwd`/`project`, `max_chunks`, `max_chars`, `repo`, `include_graph`, `graph_min_confidence` |
 | `gpc.estimate_token_savings` | Reports `indexed_tokens`, `retrieved_tokens` and the estimated saving for a query. | `query`, `cwd`/`project` |
 | `gpc.graph_neighbors` | Neighbours of a node in the Neo4j projection, with typed relations and confidence. Answers "who uses X?". | `node`, `cwd`/`project`, `depth`, `min_confidence`, `relations`, `limit` |
 | `gpc.graph_summary` | God nodes, repo breakdown, cross-repo bridges and communities. The structured equivalent of `GRAPH_REPORT.md`. | `cwd`/`project`, `top_k_gods`, `include_cohesion` |
 | `gpc.graph_path` | Shortest path between two nodes in the Neo4j projection. Each hop carries relation + confidence. | `a`, `b`, `cwd`/`project`, `max_hops`, `min_confidence` |
+| `gpc.graph_community` | Members, repos and external bridges of one community. Run after `graph_summary` to drill into a cluster. | `community_id`, `cwd`/`project`, `top_members`, `top_external_bridges` |
 | `gpc.mcp_usage` | Aggregates the server's own call log. Use it to confirm AI clients are actually hitting GPC. | `window_hours`, `cwd`/`project` |
 
 **Project resolution**. Every tool accepts either `project` (a registered slug
