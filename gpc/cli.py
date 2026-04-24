@@ -25,7 +25,17 @@ from gpc.config import (
 )
 from gpc.embeddings import active_embedding_model, embedding_dimension
 from gpc.indexer import IndexOptions, index_project_path
-from gpc.registry import add_project_alias, normalize_slug
+from gpc.registry import (
+    add_project_alias,
+    consolidate_projects,
+    ensure_project,
+    list_projects,
+    list_repos,
+    normalize_slug,
+    register_repo,
+    resolve_project,
+    resolve_repo,
+)
 from gpc.search import search_project_context
 from gpc.status import get_index_status
 from gpc.token_economy import estimate_for_project
@@ -69,6 +79,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-gitignore",
         action="store_true",
         help="Do not add .gpc/ to the project .gitignore.",
+    )
+    init_parser.add_argument(
+        "--project",
+        dest="parent_project",
+        help="Attach this path as a repo of an existing logical project (by slug or alias).",
+    )
+    init_parser.add_argument(
+        "--repo",
+        dest="repo_slug",
+        help="Repo slug (when used with --project). Defaults to the directory name.",
     )
     init_parser.set_defaults(func=cmd_init)
 
@@ -131,6 +151,128 @@ def build_parser() -> argparse.ArgumentParser:
     mcp_parser = subparsers.add_parser("mcp-stdio", help="Run the MCP server over stdio.")
     mcp_parser.set_defaults(func=cmd_mcp_stdio)
 
+    # Project lifecycle
+    project_parser = subparsers.add_parser("project", help="Manage logical projects.")
+    project_subs = project_parser.add_subparsers(dest="project_cmd", required=True)
+
+    project_create = project_subs.add_parser(
+        "create", help="Create a logical project (virtual root) that can own repos."
+    )
+    project_create.add_argument("slug")
+    project_create.add_argument("--name")
+    project_create.add_argument("--description")
+    project_create.add_argument("--alias", action="append", default=[])
+    project_create.set_defaults(func=cmd_project_create)
+
+    project_list = project_subs.add_parser(
+        "list", help="List projects with their repos and aliases."
+    )
+    project_list.add_argument("--json", action="store_true")
+    project_list.set_defaults(func=cmd_project_list)
+
+    project_consolidate = project_subs.add_parser(
+        "consolidate",
+        help="Fold several standalone projects into one project owning them as repos.",
+    )
+    project_consolidate.add_argument("--target", required=True, help="Target project slug.")
+    project_consolidate.add_argument(
+        "--source",
+        action="append",
+        required=True,
+        help="Source project slug. Repeatable.",
+    )
+    project_consolidate.add_argument("--target-name")
+    project_consolidate.add_argument("--target-description")
+    project_consolidate.add_argument(
+        "--delete-sources",
+        action="store_true",
+        help="Delete the source project rows after consolidation.",
+    )
+    project_consolidate.add_argument("--json", action="store_true")
+    project_consolidate.set_defaults(func=cmd_project_consolidate)
+
+    # Repo lifecycle
+    repo_parser = subparsers.add_parser("repo", help="Manage repositories under a project.")
+    repo_subs = repo_parser.add_subparsers(dest="repo_cmd", required=True)
+
+    repo_add = repo_subs.add_parser("add", help="Attach a repo to a project.")
+    repo_add.add_argument("project", help="Project slug or alias.")
+    repo_add.add_argument("path", help="Repo root path.")
+    repo_add.add_argument("--slug")
+    repo_add.add_argument("--name")
+    repo_add.add_argument("--description")
+    repo_add.add_argument(
+        "--create-project",
+        action="store_true",
+        help="Create the project if it does not exist yet.",
+    )
+    repo_add.set_defaults(func=cmd_repo_add)
+
+    repo_list_p = repo_subs.add_parser("list", help="List repos.")
+    repo_list_p.add_argument("--project")
+    repo_list_p.add_argument("--json", action="store_true")
+    repo_list_p.set_defaults(func=cmd_repo_list)
+
+    repo_remove = repo_subs.add_parser("remove", help="Detach a repo from its project.")
+    repo_remove.add_argument("project", help="Project slug or alias.")
+    repo_remove.add_argument("repo", help="Repo slug.")
+    repo_remove.add_argument("--yes", action="store_true")
+    repo_remove.set_defaults(func=cmd_repo_remove)
+
+    # Graph / backend reset
+    graph_reset_parser = subparsers.add_parser(
+        "graph-reset",
+        help="Wipe the Neo4j projection and optionally rebuild it from Postgres.",
+    )
+    graph_reset_parser.add_argument("--project", help="Restrict to a single project slug.")
+    graph_reset_parser.add_argument("--yes", action="store_true", required=False)
+    graph_reset_parser.add_argument(
+        "--rebuild", action="store_true", help="Re-run project_graph_to_neo4j and bridging after the wipe."
+    )
+    graph_reset_parser.set_defaults(func=cmd_graph_reset)
+
+    reset_parser = subparsers.add_parser(
+        "reset",
+        help="NUCLEAR: drop Postgres tables, wipe Neo4j, and recreate Qdrant.",
+    )
+    reset_parser.add_argument("--yes", action="store_true", required=False)
+    reset_parser.add_argument("--skip-postgres", action="store_true")
+    reset_parser.add_argument("--skip-neo4j", action="store_true")
+    reset_parser.add_argument("--skip-qdrant", action="store_true")
+    reset_parser.set_defaults(func=cmd_reset)
+
+    bridge_parser = subparsers.add_parser(
+        "graph-bridge",
+        help="Create CROSS_REPO_BRIDGE edges between GraphifyNodes of a project.",
+    )
+    bridge_parser.add_argument(
+        "--project",
+        help="Project slug. If omitted, bridges every GraphifyProject in Neo4j.",
+    )
+    bridge_parser.add_argument(
+        "--rule",
+        dest="rules",
+        action="append",
+        choices=("same_source_file", "same_code_symbol", "same_generic_symbol"),
+        help="Bridging rule to apply. Repeatable. Default: same_source_file + same_code_symbol.",
+    )
+    bridge_parser.add_argument(
+        "--include-ambiguous",
+        action="store_true",
+        help="Shortcut: also apply the same_generic_symbol rule (emits AMBIGUOUS edges).",
+    )
+    bridge_parser.add_argument(
+        "--clear",
+        action="store_true",
+        help="Delete existing CROSS_REPO_BRIDGE edges for the project before writing.",
+    )
+    bridge_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit machine-readable JSON instead of human output.",
+    )
+    bridge_parser.set_defaults(func=cmd_graph_bridge)
+
     return parser
 
 
@@ -179,6 +321,52 @@ def cmd_init(args: argparse.Namespace) -> int:
     if not root.exists() or not root.is_dir():
         raise SystemExit(f"Project root does not exist or is not a directory: {root}")
 
+    parent_project = getattr(args, "parent_project", None)
+    repo_slug = normalize_slug(args.repo_slug) if getattr(args, "repo_slug", None) else None
+
+    if parent_project:
+        # New mode: attach this directory as a repo of an existing project.
+        repo = register_repo(
+            parent_project,
+            root,
+            slug=repo_slug or root.name,
+            name=args.name,
+            description=args.description,
+            create_project_if_missing=False,
+        )
+        project_slug_for_index = repo["project_slug"]
+        repo_slug_for_index = repo["slug"]
+        description = args.description
+
+        if not args.no_gitignore:
+            ensure_gitignore_entry(root)
+        if not args.no_hooks:
+            install_git_hooks(root, force=args.force, background=not args.foreground_hooks)
+        write_repo_config(
+            root,
+            project_slug=project_slug_for_index,
+            repo_slug=repo_slug_for_index,
+            force=args.force,
+        )
+
+        if args.no_index:
+            print(
+                f"repo_registered project={project_slug_for_index} "
+                f"repo={repo_slug_for_index} path={root}"
+            )
+            return 0
+
+        stats = index_project_path(
+            root,
+            slug=project_slug_for_index,
+            name=args.name,
+            description=description,
+            options=IndexOptions(),
+            repo_slug=repo_slug_for_index,
+        )
+        print_index_stats(stats)
+        return 1 if stats.files_failed else 0
+
     slug = normalize_slug(args.slug or root.name)
     name = args.name or root.name
     write_project_config(
@@ -210,6 +398,22 @@ def cmd_init(args: argparse.Namespace) -> int:
         add_project_alias(slug, alias)
     print_index_stats(stats)
     return 1 if stats.files_failed else 0
+
+
+def write_repo_config(
+    root: Path,
+    *,
+    project_slug: str,
+    repo_slug: str,
+    force: bool,
+) -> None:
+    config_path = root / ".gpc.yaml"
+    if config_path.exists() and not force:
+        return
+    config_path.write_text(
+        f"project: {project_slug}\nrepo: {repo_slug}\n",
+        encoding="utf-8",
+    )
 
 
 def cmd_status(args: argparse.Namespace) -> int:
@@ -355,6 +559,255 @@ def cmd_mcp_stdio(_: argparse.Namespace) -> int:
     from gpc.mcp_server import mcp
 
     mcp.run(transport="stdio")
+    return 0
+
+
+def cmd_project_create(args: argparse.Namespace) -> int:
+    project = ensure_project(
+        slug=args.slug,
+        name=args.name,
+        description=args.description,
+        aliases=args.alias or None,
+    )
+    print(
+        f"project={project['slug']} name={project['name']} "
+        f"aliases={','.join(project.get('aliases', []) or [])}"
+    )
+    return 0
+
+
+def cmd_project_list(args: argparse.Namespace) -> int:
+    projects = list_projects()
+    repos_by_project: dict[str, list[dict]] = {}
+    for repo in list_repos():
+        repos_by_project.setdefault(repo["project_slug"], []).append(repo)
+
+    if args.json:
+        payload = [
+            {
+                "slug": p["slug"],
+                "name": p["name"],
+                "aliases": p.get("aliases", []),
+                "root_path": p.get("root_path"),
+                "repos": [
+                    {
+                        "slug": r["slug"],
+                        "name": r["name"],
+                        "root_path": r["root_path"],
+                    }
+                    for r in repos_by_project.get(p["slug"], [])
+                ],
+            }
+            for p in projects
+        ]
+        print(json.dumps(payload, default=str, indent=2))
+        return 0
+
+    if not projects:
+        print("No projects registered. Create one with `gpc project create <slug>`.")
+        return 0
+
+    for project in projects:
+        repos = repos_by_project.get(project["slug"], [])
+        aliases = ",".join(project.get("aliases") or [])
+        print(f"project={project['slug']} name={project['name']} aliases={aliases}")
+        for repo in repos:
+            print(f"  repo={repo['slug']} path={repo['root_path']}")
+        if not repos:
+            print("  (no repos)")
+    return 0
+
+
+def cmd_project_consolidate(args: argparse.Namespace) -> int:
+    stats = consolidate_projects(
+        args.target,
+        args.source,
+        target_name=args.target_name,
+        target_description=args.target_description,
+        delete_source_projects=args.delete_sources,
+    )
+    if args.json:
+        print(json.dumps(stats, indent=2))
+        return 0
+    print(
+        f"consolidated target={stats['target']} "
+        f"sources={','.join(stats['sources'])} "
+        f"repos_created={stats['repos_created']} "
+        f"files_moved={stats['files_moved']} "
+        f"chunks_moved={stats['chunks_moved']} "
+        f"entities_moved={stats['entities_moved']} "
+        f"relations_moved={stats['relations_moved']} "
+        f"decisions_moved={stats['decisions_moved']} "
+        f"aliases_moved={stats['aliases_moved']} "
+        f"source_projects_deleted={stats['source_projects_deleted']}"
+    )
+    return 0
+
+
+def cmd_repo_add(args: argparse.Namespace) -> int:
+    repo = register_repo(
+        args.project,
+        args.path,
+        slug=args.slug,
+        name=args.name,
+        description=args.description,
+        create_project_if_missing=args.create_project,
+    )
+    print(
+        f"repo={repo['slug']} project={repo['project_slug']} path={repo['root_path']}"
+    )
+    return 0
+
+
+def cmd_repo_list(args: argparse.Namespace) -> int:
+    rows = list_repos(args.project)
+    if args.json:
+        print(json.dumps(
+            [
+                {
+                    "project": r["project_slug"],
+                    "repo": r["slug"],
+                    "name": r["name"],
+                    "root_path": r["root_path"],
+                    "description": r.get("description"),
+                }
+                for r in rows
+            ],
+            default=str,
+            indent=2,
+        ))
+        return 0
+    if not rows:
+        print("No repos registered.")
+        return 0
+    for r in rows:
+        print(f"{r['project_slug']:<25} {r['slug']:<25} {r['root_path']}")
+    return 0
+
+
+def cmd_repo_remove(args: argparse.Namespace) -> int:
+    if not args.yes:
+        print("Refuse: pass --yes to confirm. Files and chunks will keep their "
+              "project_id but lose their repo_id (set to NULL).", file=sys.stderr)
+        return 2
+    import psycopg as _psycopg  # noqa: F401
+    from gpc.registry import connect
+    project_slug = normalize_slug(args.project)
+    repo_slug = normalize_slug(args.repo)
+    with connect() as conn:
+        project = conn.execute(
+            "select id from gpc_projects where slug = %s",
+            (project_slug,),
+        ).fetchone()
+        if not project:
+            print(f"Project not found: {project_slug}", file=sys.stderr)
+            return 1
+        deleted = conn.execute(
+            "delete from gpc_repos where project_id = %s and slug = %s",
+            (project["id"], repo_slug),
+        ).rowcount or 0
+    print(f"repo_removed project={project_slug} repo={repo_slug} deleted={deleted}")
+    return 0
+
+
+def cmd_graph_reset(args: argparse.Namespace) -> int:
+    if not args.yes:
+        print(
+            "Refuse: pass --yes to confirm. This wipes the Neo4j projection "
+            "for the given scope. Postgres and Qdrant are not touched.",
+            file=sys.stderr,
+        )
+        return 2
+    from gpc.graph_reset import reset_and_rebuild, reset_neo4j
+
+    if args.rebuild:
+        stats = reset_and_rebuild(
+            project_slug=args.project,
+            rebuild_gpc=True,
+            rebuild_graphify_bridges=True,
+        )
+    else:
+        stats = reset_neo4j(project_slug=args.project)
+
+    print(
+        f"neo4j_nodes_deleted={stats.neo4j_nodes_deleted} "
+        f"neo4j_relationships_deleted={stats.neo4j_relationships_deleted} "
+        f"gpc_rebuilt={stats.gpc_rebuilt} "
+        f"graphify_projects_bridged={stats.graphify_projects_bridged} "
+        f"bridges_written={stats.bridges_written}"
+    )
+    return 0
+
+
+def cmd_reset(args: argparse.Namespace) -> int:
+    if not args.yes:
+        print(
+            "Refuse: pass --yes to confirm. `gpc reset` drops every gpc_* "
+            "table, wipes the Neo4j projection, and recreates the Qdrant "
+            "collection. Re-indexing is required afterwards.",
+            file=sys.stderr,
+        )
+        return 2
+    from gpc.reset import reset_all
+
+    report = reset_all(
+        run_module=run_module,
+        postgres=not args.skip_postgres,
+        neo4j=not args.skip_neo4j,
+        qdrant=not args.skip_qdrant,
+    )
+    print(
+        f"postgres_dropped={len(report.postgres_tables_dropped)} "
+        f"postgres_migrations_applied={','.join(report.postgres_migrations_applied) or '-'} "
+        f"neo4j_nodes_deleted={report.neo4j_nodes_deleted} "
+        f"neo4j_relationships_deleted={report.neo4j_relationships_deleted} "
+        f"qdrant_recreated={report.qdrant_collection_recreated}"
+    )
+    return 0
+
+
+def cmd_graph_bridge(args: argparse.Namespace) -> int:
+    from dataclasses import asdict
+
+    from gpc.cross_repo import (
+        ALL_RULES,
+        DEFAULT_RULES,
+        RULE_SAME_GENERIC_SYMBOL,
+        build_bridges,
+        build_bridges_all_projects,
+    )
+
+    rules = tuple(args.rules) if args.rules else DEFAULT_RULES
+    if args.include_ambiguous and RULE_SAME_GENERIC_SYMBOL not in rules:
+        rules = rules + (RULE_SAME_GENERIC_SYMBOL,)
+    for rule in rules:
+        if rule not in ALL_RULES:
+            print(f"Unknown bridging rule: {rule}", file=sys.stderr)
+            return 2
+
+    if args.project:
+        results = [build_bridges(args.project, rules=rules, clear_existing=args.clear)]
+    else:
+        results = build_bridges_all_projects(rules=rules, clear_existing=args.clear)
+
+    if args.json:
+        print(json.dumps([asdict(r) for r in results], default=list, indent=2))
+        return 0
+
+    if not results:
+        print("No GraphifyProject nodes found in Neo4j — nothing to bridge.")
+        return 0
+
+    for stats in results:
+        print(
+            f"project={stats.project_slug} repos={stats.repos} "
+            f"same_source_file={stats.pairs_same_source_file} "
+            f"same_code_symbol={stats.pairs_same_code_symbol} "
+            f"same_generic_symbol={stats.pairs_same_generic_symbol} "
+            f"edges_written={stats.edges_written} "
+            f"edges_deleted={stats.edges_deleted} "
+            f"rules={','.join(stats.rules_applied)}"
+        )
     return 0
 
 

@@ -21,7 +21,13 @@ from gpc.config import (
     QDRANT_PORT,
 )
 from gpc.embeddings import active_embedding_model, embedding_dimension
-from gpc.registry import list_projects, resolve_project
+from gpc.graph_query import (
+    ALLOWED_CONFIDENCES,
+    graph_neighbors,
+    graph_path,
+    graph_summary,
+)
+from gpc.registry import list_projects, list_repos, resolve_project, resolve_repo
 from gpc.search import compose_project_context, search_project_context
 from gpc.status import get_index_status
 from gpc.token_economy import estimate_for_project
@@ -99,7 +105,52 @@ def mcp_list_projects() -> dict[str, Any]:
     """List projects registered in GPC."""
     try:
         projects = [_project_payload(project) for project in list_projects()]
+        # Attach repos to each project so clients see the full picture without
+        # needing a second round-trip to gpc.list_repos.
+        all_repos = list_repos()
+        by_project: dict[str, list[dict[str, Any]]] = {}
+        for repo in all_repos:
+            by_project.setdefault(repo["project_slug"], []).append(_repo_payload(repo))
+        for payload in projects:
+            payload["repos"] = by_project.get(payload["slug"], [])
         return {"ok": True, "projects": projects, "count": len(projects)}
+    except Exception as exc:
+        return {"ok": False, "error": _error_payload(exc)}
+
+
+@mcp.tool(name="gpc.list_repos")
+def mcp_list_repos(project: str | None = None, cwd: str | None = None) -> dict[str, Any]:
+    """List repositories under a project. Pass cwd to auto-resolve the project."""
+    try:
+        if not project and cwd:
+            resolved = resolve_project(cwd=_effective_cwd(cwd))
+            project = resolved["slug"]
+        repos = [_repo_payload(repo) for repo in list_repos(project)]
+        return {"ok": True, "repos": repos, "count": len(repos), "project": project}
+    except Exception as exc:
+        return {"ok": False, "error": _error_payload(exc)}
+
+
+@mcp.tool(name="gpc.resolve_repo")
+def mcp_resolve_repo(
+    cwd: str | None = None,
+    project: str | None = None,
+    repo: str | None = None,
+) -> dict[str, Any]:
+    """Resolve a (project, repo) tuple from cwd or explicit slugs.
+
+    Prefer this over gpc.resolve_project when the caller knows it is inside a
+    specific repo of a multi-repo project and wants the repo scope pre-applied
+    to gpc.search / gpc.context.
+    """
+    try:
+        resolved = resolve_repo(cwd=_effective_cwd(cwd), project=project, repo=repo)
+        return {
+            "ok": True,
+            "project": _project_payload(resolved["project"]),
+            "repo": _repo_payload(resolved["repo"]) if resolved.get("repo") else None,
+            "resolution_reason": resolved.get("resolution_reason"),
+        }
     except Exception as exc:
         return {"ok": False, "error": _error_payload(exc)}
 
@@ -126,8 +177,13 @@ def mcp_search(
     cwd: str | None = None,
     limit: int = 5,
     content_chars: int = 1_200,
+    repo: str | list[str] | None = None,
 ) -> dict[str, Any]:
-    """Search indexed project chunks with Ollama embeddings and Qdrant."""
+    """Search indexed project chunks with Ollama embeddings and Qdrant.
+
+    Pass ``repo`` (slug or list of slugs) to narrow the search to specific
+    repositories of the project.
+    """
     try:
         safe_limit = max(1, min(limit, 20))
         safe_chars = max(200, min(content_chars, 8_000))
@@ -136,11 +192,13 @@ def mcp_search(
             project=project,
             cwd=_effective_cwd(cwd),
             limit=safe_limit,
+            repo=repo,
         )
         return {
             "ok": True,
             "project": _project_payload(resolved_project),
             "query": query,
+            "repo_filter": repo,
             "results": [
                 _search_result_payload(result, content_chars=safe_chars)
                 for result in results
@@ -157,8 +215,13 @@ def mcp_context(
     cwd: str | None = None,
     max_chunks: int = 5,
     max_chars: int = 6_000,
+    repo: str | list[str] | None = None,
 ) -> dict[str, Any]:
-    """Return a bounded context block suitable for an AI model prompt."""
+    """Return a bounded context block suitable for an AI model prompt.
+
+    Pass ``repo`` (slug or list of slugs) to narrow the context to specific
+    repositories of the project.
+    """
     try:
         resolved_project, results, context = compose_project_context(
             query,
@@ -166,17 +229,119 @@ def mcp_context(
             cwd=_effective_cwd(cwd),
             max_chunks=max_chunks,
             max_chars=max_chars,
+            repo=repo,
         )
         return {
             "ok": True,
             "project": _project_payload(resolved_project),
             "query": query,
+            "repo_filter": repo,
             "context": context,
             "sources": [
                 _search_result_payload(result, content_chars=0)
                 for result in results
             ],
         }
+    except Exception as exc:
+        return {"ok": False, "error": _error_payload(exc)}
+
+
+@mcp.tool(name="gpc.graph_neighbors")
+def mcp_graph_neighbors(
+    node: str,
+    project: str | None = None,
+    cwd: str | None = None,
+    depth: int = 1,
+    min_confidence: str = "EXTRACTED",
+    relations: list[str] | None = None,
+    limit: int = 50,
+) -> dict[str, Any]:
+    """Return neighbors of a node in the project's graph, with tiered confidence.
+
+    Answers structural questions such as "who calls X?" or "what does X touch?"
+    that semantic search cannot express. ``node`` is matched against
+    ``GraphifyNode.id`` or ``GraphifyNode.label``. ``min_confidence`` is one of
+    ``EXTRACTED``, ``INFERRED``, ``AMBIGUOUS`` (default ``EXTRACTED`` — caller
+    must opt in to heuristic edges). ``relations`` filters by relationship
+    type (e.g. ``["GRAPHIFY_RELATION"]`` or ``["CROSS_REPO_BRIDGE"]``).
+    """
+    try:
+        if min_confidence not in ALLOWED_CONFIDENCES:
+            raise ValueError(
+                f"min_confidence must be one of {ALLOWED_CONFIDENCES}, got {min_confidence!r}"
+            )
+        resolved = resolve_project(project=project, cwd=_effective_cwd(cwd))
+        payload = graph_neighbors(
+            resolved["slug"],
+            node,
+            depth=max(1, min(depth, 3)),
+            min_confidence=min_confidence,
+            relations=relations,
+            limit=max(1, min(limit, 200)),
+        )
+        payload["project"] = _project_payload(resolved)
+        return {"ok": True, **payload}
+    except Exception as exc:
+        return {"ok": False, "error": _error_payload(exc)}
+
+
+@mcp.tool(name="gpc.graph_summary")
+def mcp_graph_summary(
+    project: str | None = None,
+    cwd: str | None = None,
+    top_k_gods: int = 10,
+    include_cohesion: bool = True,
+) -> dict[str, Any]:
+    """Return god nodes, repo breakdown, cross-repo bridges and communities.
+
+    Use this before reading code: it is the structured equivalent of
+    ``graphify-out/GRAPH_REPORT.md`` and gives the caller a mental map of the
+    project in one call.
+    """
+    try:
+        resolved = resolve_project(project=project, cwd=_effective_cwd(cwd))
+        payload = graph_summary(
+            resolved["slug"],
+            top_k_gods=max(1, min(top_k_gods, 50)),
+            include_cohesion=include_cohesion,
+        )
+        payload["project"] = _project_payload(resolved)
+        return {"ok": True, **payload}
+    except Exception as exc:
+        return {"ok": False, "error": _error_payload(exc)}
+
+
+@mcp.tool(name="gpc.graph_path")
+def mcp_graph_path(
+    a: str,
+    b: str,
+    project: str | None = None,
+    cwd: str | None = None,
+    max_hops: int = 6,
+    min_confidence: str = "EXTRACTED",
+) -> dict[str, Any]:
+    """Return the shortest path between two nodes in the project's graph.
+
+    Each hop reports the relation type, direction, confidence, and the rule
+    that produced it (for cross-repo bridges). When no path is found or the
+    best path falls below ``min_confidence``, ``path`` is ``None`` and
+    ``reason`` explains why.
+    """
+    try:
+        if min_confidence not in ALLOWED_CONFIDENCES:
+            raise ValueError(
+                f"min_confidence must be one of {ALLOWED_CONFIDENCES}, got {min_confidence!r}"
+            )
+        resolved = resolve_project(project=project, cwd=_effective_cwd(cwd))
+        payload = graph_path(
+            resolved["slug"],
+            a,
+            b,
+            max_hops=max(1, min(max_hops, 8)),
+            min_confidence=min_confidence,
+        )
+        payload["project"] = _project_payload(resolved)
+        return {"ok": True, **payload}
     except Exception as exc:
         return {"ok": False, "error": _error_payload(exc)}
 
@@ -224,6 +389,18 @@ def _project_payload(project: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _repo_payload(repo: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": str(repo["id"]),
+        "slug": repo["slug"],
+        "name": repo.get("name"),
+        "root_path": repo.get("root_path"),
+        "description": repo.get("description"),
+        "project_slug": repo.get("project_slug"),
+        "project_name": repo.get("project_name"),
+    }
+
+
 def _search_result_payload(result: Any, *, content_chars: int) -> dict[str, Any]:
     content = result.content.strip()
     if content_chars <= 0:
@@ -238,6 +415,7 @@ def _search_result_payload(result: Any, *, content_chars: int) -> dict[str, Any]
         "title": result.title,
         "chunk_type": result.chunk_type,
         "language": result.language,
+        "repo_slug": getattr(result, "repo_slug", None),
     }
     if content_chars != 0:
         payload["content"] = content
