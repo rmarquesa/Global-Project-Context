@@ -1,0 +1,97 @@
+{
+  "queries": [
+    {
+      "id": "retrieval",
+      "label": "How does retrieval work?",
+      "hint": "Semantic search across chunks",
+      "tool": "gpc.search",
+      "request": {
+        "query": "how does retrieval work",
+        "project": "global-project-context",
+        "limit": 4,
+        "content_chars": 1200
+      },
+      "tokens_before": 25737,
+      "tokens_after": 1387,
+      "results": [
+        {
+          "score": 0.87,
+          "source_file": "gpc/mcp_server.py",
+          "chunk_id": "gpc_mcp_server_py:retrieve",
+          "snippet": "@mcp.tool(name=\"gpc.search\")\ndef mcp_search(query: str, project: str | None = None, ... ) -> dict[str, Any]:\n    \"\"\"Search indexed project chunks with Ollama embeddings and Qdrant.\"\"\"\n    resolved_project, results = search_project_context(query, project=project, ...)"
+        },
+        {
+          "score": 0.81,
+          "source_file": "gpc/retrieval.py",
+          "chunk_id": "gpc_retrieval_py:search_project_context",
+          "snippet": "def search_project_context(query: str, *, project: str | None, limit: int, content_chars: int):\n    vector = _embed_query(query)                # Ollama nomic-embed-text\n    hits = qdrant_client.search(collection_name=slug, query_vector=vector, limit=limit)\n    chunks = hydrate_chunks_from_postgres([h.payload[\"chunk_id\"] for h in hits])\n    return slug, [ _truncate(c, content_chars) for c in chunks ]"
+        },
+        {
+          "score": 0.74,
+          "source_file": "docs/architecture.md",
+          "chunk_id": "docs_architecture_md:retrieval_stack",
+          "snippet": "Retrieval stack (query → embed → search → hydrate): the MCP server embeds the query through Ollama, queries Qdrant for the top-k vectors, then hydrates the canonical chunks from Postgres. Nothing leaves the machine."
+        },
+        {
+          "score": 0.68,
+          "source_file": "gpc/indexer.py",
+          "chunk_id": "gpc_indexer_py:embed_chunk",
+          "snippet": "def embed_chunk(text: str) -> list[float]:\n    \"\"\"Local embedding via Ollama — no external API calls.\"\"\"\n    response = ollama.embeddings(model=\"nomic-embed-text\", prompt=text)\n    return response[\"embedding\"]"
+        }
+      ]
+    },
+    {
+      "id": "neighbors",
+      "label": "What does mcp_server.py touch?",
+      "hint": "Graph neighbors of a node",
+      "tool": "gpc.graph_neighbors",
+      "request": {
+        "node": "mcp_server.py",
+        "project": "global-project-context",
+        "depth": 1,
+        "min_confidence": "EXTRACTED",
+        "limit": 12
+      },
+      "tokens_before": 14210,
+      "tokens_after": 612,
+      "results": [
+        { "relation": "contains",   "direction": "out", "confidence": "EXTRACTED", "target": "mcp_search()",            "file": "gpc/mcp_server.py:L212" },
+        { "relation": "contains",   "direction": "out", "confidence": "EXTRACTED", "target": "mcp_graph_neighbors()",   "file": "gpc/mcp_server.py:L318" },
+        { "relation": "contains",   "direction": "out", "confidence": "EXTRACTED", "target": "mcp_graph_path()",        "file": "gpc/mcp_server.py:L390" },
+        { "relation": "contains",   "direction": "out", "confidence": "EXTRACTED", "target": "resolve_project()",       "file": "gpc/mcp_server.py:L98"  },
+        { "relation": "calls",      "direction": "out", "confidence": "EXTRACTED", "target": "search_project_context()", "file": "gpc/retrieval.py"     },
+        { "relation": "calls",      "direction": "out", "confidence": "EXTRACTED", "target": "project_graph_to_neo4j()", "file": "gpc/graph.py"         },
+        { "relation": "calls",      "direction": "out", "confidence": "EXTRACTED", "target": "audit_mcp_call()",        "file": "gpc/audit.py"          },
+        { "relation": "references", "direction": "in",  "confidence": "EXTRACTED", "target": "install_mcp_clients.py",  "file": "gpc/install_mcp_clients.py" },
+        { "relation": "references", "direction": "in",  "confidence": "EXTRACTED", "target": "cli.py",                  "file": "gpc/cli.py"            },
+        { "relation": "rationale_for", "direction": "in", "confidence": "INFERRED", "target": "docs/architecture.md",    "file": "docs/architecture.md"  }
+      ]
+    },
+    {
+      "id": "path",
+      "label": "Path: cli.py → Qdrant",
+      "hint": "Shortest path through the graph",
+      "tool": "gpc.graph_path",
+      "request": {
+        "a": "cli.py",
+        "b": "qdrant",
+        "project": "global-project-context",
+        "max_hops": 6,
+        "min_confidence": "EXTRACTED"
+      },
+      "tokens_before": 18540,
+      "tokens_after": 284,
+      "path": [
+        { "node": "cli.py",                 "file": "gpc/cli.py"        },
+        { "edge": "calls",       "confidence": "EXTRACTED" },
+        { "node": "index_project_path()",   "file": "gpc/indexer.py:L44"  },
+        { "edge": "calls",       "confidence": "EXTRACTED" },
+        { "node": "embed_chunk()",          "file": "gpc/indexer.py:L121" },
+        { "edge": "calls",       "confidence": "EXTRACTED" },
+        { "node": "qdrant_client.upsert()", "file": "gpc/qdrant_store.py:L67" },
+        { "edge": "references",  "confidence": "EXTRACTED" },
+        { "node": "qdrant",                 "file": "docker-compose.yaml" }
+      ]
+    }
+  ]
+}

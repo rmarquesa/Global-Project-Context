@@ -52,6 +52,7 @@ coverage/
 # Local runtime data
 .gpc/
 data/
+!site/data/
 tmp/
 temp/
 logs/
