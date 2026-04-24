@@ -68,6 +68,14 @@ cd /path/to/project
 gpc init . --slug project-slug --name "Project Name"
 ```
 
+Use this `--slug` form only when the checkout is the whole project. For a
+repository inside a logical multi-repo project, initialize it with the parent
+project and a repo slug:
+
+```bash
+gpc init . --project project-slug --repo repo-slug --name "Repo Name"
+```
+
 This:
 
 - Creates `.gpc.yaml` with the project identity.

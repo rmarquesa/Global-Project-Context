@@ -316,10 +316,30 @@ This creates `.gpc.yaml`, adds `.gpc/` to `.gitignore`, installs
 `post-commit`, `post-merge` and `post-checkout` hooks, and runs the first
 index.
 
+For a product split across several repositories, create one logical project and
+attach each checkout as a repo:
+
+```bash
+gpc project create alugafacil --name "AlugaFácil"
+gpc init /path/to/workers-gateway --project alugafacil --repo workers-gateway
+gpc init /path/to/workers-users   --project alugafacil --repo workers-users
+gpc init /path/to/web             --project alugafacil --repo web
+```
+
+Use `--slug` only for standalone projects. Use `--project` + `--repo` when the
+directory belongs to a larger multi-repo project; the installed hooks preserve
+that mapping for future automatic indexing.
+
 Manual indexing:
 
 ```bash
 gpc-index . --slug project-slug --name "Project Name"
+```
+
+Manual indexing for a repo inside a logical project:
+
+```bash
+gpc-index /path/to/workers-gateway --project alugafacil --repo workers-gateway
 ```
 
 Search:

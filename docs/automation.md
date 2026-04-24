@@ -38,6 +38,16 @@ Inside any Git repository:
 gpc init . --slug project-slug --name "Project Name"
 ```
 
+For a repository that belongs to a logical multi-repo project, initialize with
+the parent project and repo slug instead:
+
+```bash
+gpc init . --project project-slug --repo repo-slug --name "Repo Name"
+```
+
+The generated hooks read `.gpc.yaml` and keep using the same project/repo pair
+for automatic indexing.
+
 This writes:
 
 - `.gpc.yaml` — project identity and the GPC root path.

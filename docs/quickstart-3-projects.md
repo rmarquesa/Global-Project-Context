@@ -43,6 +43,16 @@ gpc init ~/Projects/my-web      --slug my-web      --name "My Web"
 `gpc init` registers project identity, installs the auto-index Git hooks and
 runs the first full index for each repository.
 
+If those checkouts are parts of one product rather than separate projects, use
+one logical project and attach each checkout as a repo:
+
+```bash
+gpc project create my-product --name "My Product"
+gpc init ~/Projects/my-api      --project my-product --repo my-api
+gpc init ~/Projects/my-workers  --project my-product --repo my-workers
+gpc init ~/Projects/my-web      --project my-product --repo my-web
+```
+
 ## 4. Verify Coverage
 
 ```bash

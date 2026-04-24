@@ -348,6 +348,16 @@ def build_parser() -> argparse.ArgumentParser:
 def add_index_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("path", nargs="?", default=".", help="Project root path.")
     parser.add_argument("--slug", help="Project slug. Defaults to directory name.")
+    parser.add_argument(
+        "--project",
+        dest="parent_project",
+        help="Index this path as a repo of an existing logical project.",
+    )
+    parser.add_argument(
+        "--repo",
+        dest="repo_slug",
+        help="Repo slug when used with --project.",
+    )
     parser.add_argument("--name", help="Project display name.")
     parser.add_argument("--description", help="Optional project description.")
     parser.add_argument("--reset", action="store_true", help="Delete existing index first.")
@@ -363,9 +373,14 @@ def add_index_args(parser: argparse.ArgumentParser) -> None:
 
 
 def cmd_index(args: argparse.Namespace) -> int:
+    if args.parent_project and args.slug:
+        raise SystemExit("Use either --slug for a standalone project or --project/--repo for a multi-repo project, not both.")
+    if args.repo_slug and not args.parent_project:
+        raise SystemExit("--repo requires --project")
+
     stats = index_project_path(
         Path(args.path),
-        slug=args.slug,
+        slug=args.parent_project or args.slug,
         name=args.name,
         description=args.description,
         options=IndexOptions(
@@ -380,6 +395,7 @@ def cmd_index(args: argparse.Namespace) -> int:
             batch_size=args.batch_size,
             limit_files=args.limit_files,
         ),
+        repo_slug=args.repo_slug,
     )
     print_index_stats(stats)
     return 1 if stats.files_failed else 0
@@ -480,7 +496,18 @@ def write_repo_config(
     if config_path.exists() and not force:
         return
     config_path.write_text(
-        f"project: {project_slug}\nrepo: {repo_slug}\n",
+        "\n".join(
+            [
+                f"project: {quote_yaml(project_slug)}",
+                f"repo: {quote_yaml(repo_slug)}",
+                f"name: {quote_yaml(repo_slug)}",
+                f"gpc_root: {quote_yaml(str(ROOT_DIR))}",
+                "auto_index: true",
+                "hooks:",
+                *[f"  - {hook}" for hook in HOOKS],
+                "",
+            ]
+        ),
         encoding="utf-8",
     )
 
@@ -1154,6 +1181,20 @@ PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 cd "$PROJECT_ROOT" || exit 0
 mkdir -p .gpc
 
+yaml_value() {{
+  key="$1"
+  [ -f .gpc.yaml ] || return 0
+  awk -F: -v key="$key" '
+    $1 == key {{
+      value = substr($0, index($0, ":") + 1)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+      gsub(/^["'\\''"]|["'\\''"]$/, "", value)
+      print value
+      exit
+    }}
+  ' .gpc.yaml
+}}
+
 run_gpc_index() {{
   LOCK_DIR=".gpc/index.lock"
   if ! mkdir "$LOCK_DIR" 2>/dev/null; then
@@ -1163,19 +1204,38 @@ run_gpc_index() {{
   {{
     echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] gpc auto-index started by {hook}"
     export PYTHONPATH="{ROOT_DIR}:${{PYTHONPATH:-}}"
-    "{python}" -m gpc.cli index --no-prune .
+    CONFIG_PROJECT="$(yaml_value project)"
+    CONFIG_REPO="$(yaml_value repo)"
+    if [ -n "$CONFIG_PROJECT" ] && [ -n "$CONFIG_REPO" ]; then
+      "{python}" -m gpc.cli index --no-prune --project "$CONFIG_PROJECT" --repo "$CONFIG_REPO" .
+    elif [ -n "$CONFIG_PROJECT" ]; then
+      "{python}" -m gpc.cli index --no-prune --slug "$CONFIG_PROJECT" .
+    else
+      "{python}" -m gpc.cli index --no-prune .
+    fi
     echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] gpc auto-index finished by {hook}"
   }} >> ".gpc/index.log" 2>&1
+}}
+
+run_graphify_sync() {{
+  if [ "{hook}" != "post-commit" ] || [ ! -f .gpc/graphify.env ]; then
+    return 0
+  fi
+  set -a
+  . .gpc/graphify.env
+  set +a
+  "{ROOT_DIR}/examples/hooks/graphify-neo4j-post-commit.sh"
 }}
 """
     if background:
         body += """
-( run_gpc_index ) >/dev/null 2>&1 &
+( run_gpc_index; run_graphify_sync ) >/dev/null 2>&1 &
 exit 0
 """
     else:
         body += """
 run_gpc_index
+run_graphify_sync
 exit 0
 """
     return body
