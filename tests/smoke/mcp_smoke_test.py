@@ -38,6 +38,7 @@ async def main() -> None:
                 "gpc.graph_neighbors",
                 "gpc.graph_summary",
                 "gpc.graph_path",
+                "gpc.graph_community",
                 "gpc.mcp_usage",
             }
             missing = sorted(expected - set(names))

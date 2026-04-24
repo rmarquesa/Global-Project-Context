@@ -18,15 +18,25 @@ from dataclasses import dataclass, field
 import re
 from typing import Iterable, Sequence
 
+import psycopg
+from psycopg.rows import dict_row
+
+from gpc.config import POSTGRES_DSN
 from gpc.graph import neo4j_driver
 
 
 RULE_SAME_SOURCE_FILE = "same_source_file"
 RULE_SAME_CODE_SYMBOL = "same_code_symbol"
 RULE_SAME_GENERIC_SYMBOL = "same_generic_symbol"
+RULE_CONTENT_HASH = "content_hash"
 
-DEFAULT_RULES: tuple[str, ...] = (RULE_SAME_SOURCE_FILE, RULE_SAME_CODE_SYMBOL)
+DEFAULT_RULES: tuple[str, ...] = (
+    RULE_CONTENT_HASH,
+    RULE_SAME_SOURCE_FILE,
+    RULE_SAME_CODE_SYMBOL,
+)
 ALL_RULES: tuple[str, ...] = (
+    RULE_CONTENT_HASH,
     RULE_SAME_SOURCE_FILE,
     RULE_SAME_CODE_SYMBOL,
     RULE_SAME_GENERIC_SYMBOL,
@@ -51,8 +61,12 @@ GENERIC_LABEL_STEMS = frozenset(
 )
 
 
-def _is_generic_label(label: str | None) -> bool:
-    """Return ``True`` when a label is too common to bridge with high confidence."""
+def is_generic_label(label: str | None) -> bool:
+    """Return ``True`` when a label is too common to bridge with high confidence.
+
+    Also used by ``graph_query.graph_summary`` to split god nodes between
+    "central" (distinctive) and "utility_hub" (generic bootstrap / dispatch).
+    """
 
     if not label:
         return True
@@ -67,10 +81,15 @@ def _is_generic_label(label: str | None) -> bool:
     return any(stem in GENERIC_LABEL_STEMS for stem in stems)
 
 
+# Backwards-compatible alias for the original private name.
+_is_generic_label = is_generic_label
+
+
 @dataclass
 class BridgeStats:
     project_slug: str
     repos: int
+    pairs_content_hash: int = 0
     pairs_same_source_file: int = 0
     pairs_same_code_symbol: int = 0
     pairs_same_generic_symbol: int = 0
@@ -130,6 +149,105 @@ def _repo_count(session, project_slug: str) -> int:
         p=project_slug,
     ).single()
     return int(record["c"]) if record else 0
+
+
+def _collect_content_hash_pairs(project_slug: str) -> list[dict]:
+    """Pair GraphifyNodes whose underlying file bytes are identical.
+
+    Joins the Neo4j GraphifyNode identity (``project_slug``, ``repo_slug``,
+    ``source_file``) with ``gpc_files.content_hash`` in Postgres. Strong
+    signal: if two repos have the same SHA, the file was literally copied.
+    """
+
+    # 1. Pull hashes from Postgres, scoped to the project.
+    with psycopg.connect(POSTGRES_DSN, row_factory=dict_row) as conn:
+        file_rows = conn.execute(
+            """
+            select r.slug as repo_slug,
+                   f.relative_path,
+                   f.content_hash
+            from gpc_files f
+            join gpc_repos r on r.id = f.repo_id
+            join gpc_projects p on p.id = f.project_id
+            where p.slug = %s
+              and f.content_hash is not null
+            """,
+            (project_slug,),
+        ).fetchall()
+
+    # Group by content_hash — only hashes that appear in ≥2 repos are
+    # interesting (same file duplicated across services).
+    by_hash: dict[str, list[tuple[str, str]]] = {}
+    for row in file_rows:
+        key = row["content_hash"]
+        by_hash.setdefault(key, []).append((row["repo_slug"], row["relative_path"]))
+
+    # Keep only hashes where at least two distinct repos participate.
+    targets: list[dict] = []
+    for digest, locations in by_hash.items():
+        repos = {repo for repo, _ in locations}
+        if len(repos) < 2:
+            continue
+        targets.append(
+            {
+                "hash": digest,
+                "locations": locations,
+            }
+        )
+    if not targets:
+        return []
+
+    # 2. Match GraphifyNodes in Neo4j for those (repo_slug, source_file)
+    # tuples, then emit one row per cross-repo pair of GraphifyNode ids.
+    locations_flat: list[dict[str, str]] = []
+    for target in targets:
+        for repo_slug, rel in target["locations"]:
+            locations_flat.append({"repo": repo_slug, "path": rel, "hash": target["hash"]})
+
+    with neo4j_driver() as driver:
+        with driver.session() as session:
+            rows = session.run(
+                """
+                UNWIND $locations AS loc
+                MATCH (n:GraphifyNode {project_slug: $slug})
+                WHERE n.repo_slug = loc.repo AND n.source_file = loc.path
+                RETURN loc.hash AS hash, loc.repo AS repo, loc.path AS path,
+                       n.id AS node_id, n.label AS label
+                """,
+                slug=project_slug,
+                locations=locations_flat,
+            ).data()
+
+    # Group matched nodes by hash.
+    nodes_by_hash: dict[str, list[dict]] = {}
+    for row in rows:
+        nodes_by_hash.setdefault(row["hash"], []).append(row)
+
+    pairs: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+    for digest, candidates in nodes_by_hash.items():
+        for i, a in enumerate(candidates):
+            for b in candidates[i + 1 :]:
+                if a["repo"] == b["repo"]:
+                    continue
+                # Canonical ordering so (a, b) and (b, a) count as one pair.
+                pair = (a["node_id"], b["node_id"])
+                if pair[0] > pair[1]:
+                    pair = (pair[1], pair[0])
+                    a_id, b_id = pair
+                else:
+                    a_id, b_id = pair
+                if pair in seen:
+                    continue
+                seen.add(pair)
+                pairs.append(
+                    {
+                        "a_id": a_id,
+                        "b_id": b_id,
+                        "evidence": f"sha:{digest[:12]}… ({a['path']})",
+                    }
+                )
+    return pairs
 
 
 def _collect_same_source_file(session, project_slug: str) -> list[dict]:
@@ -243,12 +361,24 @@ def build_bridges(
             if clear_existing:
                 stats.edges_deleted = clear_bridges(project_slug)
 
+            # Rule 1 (strongest): content_hash. Runs first so weaker rules
+            # can skip pairs already bridged by a SHA match.
+            content_hash_pairs: list[dict] = []
+            if RULE_CONTENT_HASH in active_rules:
+                content_hash_pairs = _collect_content_hash_pairs(project_slug)
+            stats.pairs_content_hash = len(content_hash_pairs)
+            already_hash_bridged = {(p["a_id"], p["b_id"]) for p in content_hash_pairs}
+
             same_file_pairs: list[dict] = []
             if RULE_SAME_SOURCE_FILE in active_rules:
-                same_file_pairs = _collect_same_source_file(session, project_slug)
+                same_file_pairs = [
+                    row for row in _collect_same_source_file(session, project_slug)
+                    if (row["a_id"], row["b_id"]) not in already_hash_bridged
+                ]
             stats.pairs_same_source_file = len(same_file_pairs)
 
             already_file_bridged = {(row["a_id"], row["b_id"]) for row in same_file_pairs}
+            already_file_bridged |= already_hash_bridged
 
             symbol_distinct: list[dict] = []
             symbol_generic: list[dict] = []
@@ -273,6 +403,17 @@ def build_bridges(
                     )
             stats.pairs_same_code_symbol = len(symbol_distinct)
             stats.pairs_same_generic_symbol = len(symbol_generic)
+
+            if RULE_CONTENT_HASH in active_rules and content_hash_pairs:
+                _write_bridges(
+                    session,
+                    project_slug,
+                    content_hash_pairs,
+                    rule=RULE_CONTENT_HASH,
+                    confidence="INFERRED",
+                    score=0.95,
+                )
+                stats.edges_written += len(content_hash_pairs)
 
             file_rows = [
                 {"a_id": r["a_id"], "b_id": r["b_id"], "evidence": r["evidence"]}
