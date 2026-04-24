@@ -9,7 +9,7 @@ installation, transport options and troubleshooting.
 
 ## MCP Tools
 
-The server exposes fourteen read-only tools.
+The server exposes sixteen read-only tools.
 
 | Tool | Purpose | Key inputs |
 |---|---|---|
@@ -26,6 +26,8 @@ The server exposes fourteen read-only tools.
 | `gpc.graph_summary` | God nodes, repo breakdown, cross-repo bridges and communities. The structured equivalent of `GRAPH_REPORT.md`. | `cwd`/`project`, `top_k_gods`, `include_cohesion` |
 | `gpc.graph_path` | Shortest path between two nodes in the Neo4j projection. Each hop carries relation + confidence. | `a`, `b`, `cwd`/`project`, `max_hops`, `min_confidence` |
 | `gpc.graph_community` | Members, repos and external bridges of one community. Run after `graph_summary` to drill into a cluster. | `community_id`, `cwd`/`project`, `top_members`, `top_external_bridges` |
+| `gpc.self_metrics` | List recent ``gpc_self_metrics`` snapshots for a project; optionally collect a fresh one first. | `cwd`/`project`, `limit`, `collect`, `source` |
+| `gpc.graph_diff` | Diff two metric snapshots: numeric deltas, god-node churn, confidence-distribution shift. | `cwd`/`project`, `window_hours`, `from_id`, `to_id` |
 | `gpc.mcp_usage` | Aggregates the server's own call log. Use it to confirm AI clients are actually hitting GPC. | `window_hours`, `cwd`/`project` |
 
 **Project resolution**. Every tool accepts either `project` (a registered slug

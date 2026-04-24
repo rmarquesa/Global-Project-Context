@@ -210,7 +210,7 @@ explicit and inspectable.
 
 ## MCP Surface
 
-The current server exposes fourteen read-only tools across four surfaces:
+The current server exposes sixteen read-only tools across five surfaces:
 
 - **Identity / discovery** — `gpc.health`, `gpc.resolve_project`,
   `gpc.resolve_repo`, `gpc.list_projects`, `gpc.list_repos`,
@@ -225,6 +225,11 @@ The current server exposes fourteen read-only tools across four surfaces:
   `god_nodes` (distinctive, likely architectural hubs) and `utility_hubs`
   (generic bootstrap/dispatch names like `run()` / `main()` / `connect()`)
   so the caller can ignore the second bucket without losing the signal.
+- **Longitudinal self-metrics** — `gpc.self_metrics`, `gpc.graph_diff`.
+  Writes and reads rows of ``gpc_self_metrics`` (populated at the end of
+  every ``gpc-index`` and ``gpc graph-bridge`` run). Drives the drift
+  detector of Fase 3 — comparing two snapshots surfaces size deltas,
+  god-node churn, and movement in the confidence distribution.
 - **Observability** — `gpc.mcp_usage`. Surfaces the server's own call log
   (every tool call writes one row to `gpc_mcp_calls`) so operators can
   confirm that AI clients are actually hitting the server.

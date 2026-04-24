@@ -43,8 +43,8 @@ topologia (quem toca quem) além das de semântica (o que parece com isso).
 
 Expansões naturais que ficam na Fase 2:
 - [x] `gpc.graph_community` — entregue em 2026-04-24.
-- [ ] `gpc.graph_diff` — diff estrutural entre duas projeções (útil para
-      detectar drift após cada run).
+- [x] `gpc.graph_diff` — entregue em 2026-04-24 junto com a coleta
+      longitudinal `gpc_self_metrics` (Fase 3.1).
 - [ ] Parâmetro `relations` aceitar regex ou incluir relações GPC-side
       (`OWNS_ENTITY`, `GPC_RELATION`) na camada `graph_neighbors`.
 
@@ -65,6 +65,41 @@ Expansões naturais que ficam na Fase 2:
 - [x] Docs: seção "Auditing MCP Usage" em [docs/mcp-clients.md](mcp-clients.md)
       e nota em [docs/token-economy.md](token-economy.md) sobre baseline
       otimista vs economia realista (30–97% dependendo do tipo de pergunta).
+
+## Fase 3.1 — Coleta longitudinal + graph_diff (entregue)
+
+**Entregue em 2026-04-24.** Começa a coletar os sinais longitudinais que
+a Fase 3 (auto-research) precisa. Nenhum detector ainda — só coleta e
+diff. Detectores de drift herdam disso depois.
+
+- [x] Migration `0007_gpc_self_metrics.sql` — uma linha por run, colunas
+      numéricas por campo (size/honesty/topology/freshness) + `god_nodes_top10`
+      e `metadata` jsonb para extensibilidade sem nova migration.
+- [x] [gpc/self_metrics.py](../gpc/self_metrics.py) — `collect_metrics()`
+      junta contagens de Postgres com counts de Neo4j (tolera Neo4j
+      indisponível — campos ficam null, row é escrita assim mesmo).
+      Exposto também como `list_snapshots`, `fetch_snapshot`, `fetch_pair`.
+- [x] Hook no fim de `index_project_path` e `build_bridges` — todo write
+      grava snapshot, `source` identifica o trigger.
+- [x] CLI `gpc metrics collect --project X [--json]` e `gpc metrics list
+      [--project X]`.
+- [x] `gpc.graph_diff` — diff entre dois snapshots. Retorna
+      `numeric_deltas`, `god_nodes_diff` (entered/exited/stable) e
+      `confidence_shift` (antes/depois em % + delta em pp).
+- [x] `gpc.self_metrics` — lista ou coleta via MCP (opt-in via
+      `collect=true`).
+- [x] Smoke test [tests/smoke/self_metrics_smoke_test.py](../tests/smoke/self_metrics_smoke_test.py)
+      valida collect + diff.
+- [x] Docs: architecture.md (5 superfícies agora), mcp-clients.md tabela
+      expandida para 16 tools, README atualizado.
+
+Próximos passos naturais em cima disto (continuam Fase 3):
+- [ ] Detector de drift — rule-based em cima de `graph_diff` (ex.:
+      alerta quando confidence_shift.INFERRED > +10pp; quando god-node
+      top-3 mudou; quando weakly-connected subiu >50%).
+- [ ] Job cron semanal que roda `gpc metrics collect` para cada projeto
+      (já que hooks só disparam quando há write; projetos parados
+      ficariam sem snapshots novos).
 
 ## Fase 1.8 — Graph quality improvements (entregue)
 
