@@ -170,6 +170,22 @@ def build_parser() -> argparse.ArgumentParser:
     project_list.add_argument("--json", action="store_true")
     project_list.set_defaults(func=cmd_project_list)
 
+    project_rename = project_subs.add_parser(
+        "rename",
+        help="Rename a project end-to-end across Postgres, Qdrant, and Neo4j.",
+    )
+    project_rename.add_argument("old_slug")
+    project_rename.add_argument("new_slug")
+    project_rename.add_argument("--new-name")
+    project_rename.add_argument(
+        "--keep-default-repo",
+        action="store_true",
+        help="Do not rename a default repo whose slug matches the old project slug.",
+    )
+    project_rename.add_argument("--yes", action="store_true", required=False)
+    project_rename.add_argument("--json", action="store_true")
+    project_rename.set_defaults(func=cmd_project_rename)
+
     project_consolidate = project_subs.add_parser(
         "consolidate",
         help="Fold several standalone projects into one project owning them as repos.",
@@ -649,6 +665,51 @@ def cmd_project_list(args: argparse.Namespace) -> int:
             print(f"  repo={repo['slug']} path={repo['root_path']}")
         if not repos:
             print("  (no repos)")
+    return 0
+
+
+def cmd_project_rename(args: argparse.Namespace) -> int:
+    from dataclasses import asdict
+
+    from gpc.project_rename import ProjectRenameError, rename_project
+
+    if not args.yes:
+        print(
+            "Refuse: pass --yes to confirm. `gpc project rename` mutates "
+            "Postgres, Qdrant payloads, and the Neo4j projection for the "
+            "given project. The old slug is preserved as an alias so "
+            "existing references keep resolving.",
+            file=sys.stderr,
+        )
+        return 2
+
+    try:
+        stats = rename_project(
+            args.old_slug,
+            args.new_slug,
+            new_name=args.new_name,
+            rename_default_repo=not args.keep_default_repo,
+        )
+    except ProjectRenameError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    if args.json:
+        print(json.dumps(asdict(stats), default=str, indent=2))
+        return 0
+
+    print(
+        f"renamed old_slug={stats.old_slug} new_slug={stats.new_slug} "
+        f"name={stats.project_name!r} "
+        f"aliases_added={','.join(stats.aliases_added) or '-'} "
+        f"repos_renamed={len(stats.repos_renamed)} "
+        f"self_metrics_rows={stats.self_metrics_rows} "
+        f"qdrant_points={stats.qdrant_points_updated} "
+        f"neo4j_nodes={stats.neo4j_nodes_updated} "
+        f"neo4j_edges={stats.neo4j_edges_updated}"
+    )
+    for warning in stats.warnings:
+        print(f"  warning: {warning}", file=sys.stderr)
     return 0
 
 
