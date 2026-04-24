@@ -21,7 +21,9 @@ Common invocations:
 ```bash
 gpc doctor
 gpc init . --slug project-slug --name "Project Name"
+gpc init /path/to/repo --project project-slug --repo repo-slug --name "Repo Name"
 gpc-index /path/to/project --slug project-slug
+gpc-index /path/to/repo --project project-slug --repo repo-slug
 gpc-status --project project-slug
 gpc-search "query" --project project-slug
 gpc token-savings "query" --project project-slug

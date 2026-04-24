@@ -73,10 +73,17 @@ into Neo4j after each commit.
 ### 1. Initialize GPC and Graphify
 
 ```bash
+gpc project create commerce --name "Commerce"
+
 cd /path/to/commerce-api
-gpc init . --slug commerce-api --name "Commerce API"
+gpc init . --project commerce --repo commerce-api --name "Commerce API"
 graphify update .
 ```
+
+Use `--slug` only when the directory is a standalone project. For a
+multi-repository product, keep the logical project slug stable in `--project`
+and give each checkout its own `--repo` slug. This keeps Postgres, Qdrant and
+Neo4j aligned under the same project.
 
 ### 2. Configure the Graphify environment
 
@@ -118,7 +125,13 @@ Graphify to refresh after branch changes.
 ### 4. Add another repository to the same project
 
 For each additional repo, keep `GPC_GRAPHIFY_PROJECT_SLUG` constant and only
-change `GPC_GRAPHIFY_REPO_SLUG`:
+change `GPC_GRAPHIFY_REPO_SLUG`. The GPC init command should follow the same
+shape:
+
+```bash
+cd /path/to/commerce-workers
+gpc init . --project commerce --repo commerce-workers --name "Commerce Workers"
+```
 
 ```env
 GPC_GRAPHIFY_PROJECT_SLUG=commerce

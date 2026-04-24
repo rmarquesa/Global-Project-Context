@@ -17,6 +17,8 @@ fi
 
 PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 cd "$PROJECT_ROOT" || exit 0
+GPC_ROOT="${GPC_ROOT:-/Users/rmarquesa/Documents/GPC}"
+export PYTHONPATH="$GPC_ROOT:${PYTHONPATH:-}"
 
 mkdir -p .gpc
 LOG_PATH="${GPC_GRAPHIFY_LOG:-.gpc/graphify-neo4j.log}"
@@ -267,7 +269,7 @@ PY
     fi
     GPC_PYTHON="${GPC_PYTHON:-}"
     if [ -z "$GPC_PYTHON" ]; then
-      for candidate in "$NEO4J_PYTHON" "$PROJECT_ROOT/venv/bin/python" "$PROJECT_ROOT/.venv/bin/python" python3 python; do
+      for candidate in "$NEO4J_PYTHON" "$GPC_ROOT/venv/bin/python" "$PROJECT_ROOT/venv/bin/python" "$PROJECT_ROOT/.venv/bin/python" python3 python; do
         if [ -n "$candidate" ] && command -v "$candidate" >/dev/null 2>&1 && "$candidate" -c "import gpc" 2>/dev/null; then
           GPC_PYTHON="$candidate"
           break
