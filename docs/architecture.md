@@ -121,6 +121,14 @@ Existing standalone projects can be folded into a shared parent with
 Aliases of the source projects are re-pointed to the target, and files,
 chunks, entities, relations and decisions are moved atomically.
 
+A project's slug can be corrected with
+`gpc project rename <old_slug> <new_slug> [--new-name <name>] --yes`. The
+rename touches Postgres (`gpc_projects`, `gpc_repos`, `gpc_self_metrics`,
+`gpc_project_aliases`), Qdrant point payloads, and every slug-bearing
+Neo4j label in one shot. The old slug is preserved as an alias so
+existing `.gpc.yaml` files, links and prior runs keep resolving to the
+renamed project.
+
 Neo4j remains a rebuildable read model; Postgres is the source of truth. Use
 `gpc graph-reset --yes [--rebuild]` to wipe the projection and rebuild it
 from Postgres, and `gpc reset --yes` for a nuclear reset across all three
