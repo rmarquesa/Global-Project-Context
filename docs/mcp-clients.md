@@ -25,6 +25,7 @@ The server exposes twelve read-only tools.
 | `gpc.graph_neighbors` | Neighbours of a node in the Neo4j projection, with typed relations and confidence. Answers "who uses X?". | `node`, `cwd`/`project`, `depth`, `min_confidence`, `relations`, `limit` |
 | `gpc.graph_summary` | God nodes, repo breakdown, cross-repo bridges and communities. The structured equivalent of `GRAPH_REPORT.md`. | `cwd`/`project`, `top_k_gods`, `include_cohesion` |
 | `gpc.graph_path` | Shortest path between two nodes in the Neo4j projection. Each hop carries relation + confidence. | `a`, `b`, `cwd`/`project`, `max_hops`, `min_confidence` |
+| `gpc.mcp_usage` | Aggregates the server's own call log. Use it to confirm AI clients are actually hitting GPC. | `window_hours`, `cwd`/`project` |
 
 **Project resolution**. Every tool accepts either `project` (a registered slug
 or alias) or `cwd` (the active repository path). Pass `project` when you
@@ -60,6 +61,54 @@ different repos share the same source file path. `AMBIGUOUS` is kept only
 when the caller explicitly passes `min_confidence="AMBIGUOUS"`. The default
 `min_confidence="EXTRACTED"` hides heuristic bridges so the caller cannot
 treat them as fact by accident.
+
+## Auditing MCP Usage
+
+Every tool call logs one row to the `gpc_mcp_calls` table (see migration
+`0006_mcp_call_log.sql`). Arguments are filtered to a known-safe subset
+(slugs, counts, query strings — no raw chunk content) and every field in
+the result is reduced to a small metadata blob.
+
+Use `gpc.mcp_usage` to see the aggregate without opening a SQL client:
+
+```json
+{
+  "window_hours": 24,
+  "totals": { "total": 147, "ok": 145, "failed": 2, "distinct_clients": 2 },
+  "by_tool":   [ { "tool": "gpc.search",  "calls": 63, "errors": 0, "avg_ms": 480 } ],
+  "by_client": [ { "client": "claude",    "calls": 110 } ],
+  "by_project":[ { "project": "alugafacil","calls": 120 } ]
+}
+```
+
+For finer-grained audits, query the table directly:
+
+```sql
+select tool, count(*) as calls, count(*) filter (where not success) as errors
+from gpc_mcp_calls
+where called_at > now() - interval '1 day'
+group by tool
+order by calls desc;
+```
+
+**Client identification** is best-effort: some environments set
+`CLAUDE_CODE_SESSION_ID` / `CODEX_CLI_VERSION` / `COPILOT_AGENT_VERSION`
+when they spawn the MCP server, and the log picks those up automatically.
+If you want explicit labels, set `GPC_MCP_CLIENT=<name>` in the client's
+MCP config before launching the server. Unknown clients are logged as
+`unknown` rather than dropped.
+
+**Retention** is the operator's responsibility. For steady-state use,
+truncate old rows with a cron job:
+
+```sql
+delete from gpc_mcp_calls where called_at < now() - interval '30 days';
+```
+
+**Failure mode**: if Postgres is unreachable when a tool call happens, the
+logger logs a warning to stderr and the tool response goes through
+unaffected. Never break the MCP surface because of an observability
+hiccup.
 
 ## Install Client Configuration
 
