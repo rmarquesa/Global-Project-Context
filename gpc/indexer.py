@@ -407,6 +407,14 @@ def index_project_path(
         except Exception as exc:  # noqa: BLE001 — never block the index run
             errors.append(f"entity_extractor: {exc}")
 
+        # Longitudinal metrics snapshot — drives the drift detector (Fase 3).
+        try:
+            from gpc.self_metrics import collect_metrics
+
+            collect_metrics(project_slug=project["slug"], source="gpc-index")
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"self_metrics: {exc}")
+
         stats = IndexStats(
             project_slug=project["slug"],
             project_id=str(project["id"]),
