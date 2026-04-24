@@ -170,6 +170,25 @@ def build_parser() -> argparse.ArgumentParser:
     project_list.add_argument("--json", action="store_true")
     project_list.set_defaults(func=cmd_project_list)
 
+    project_delete = project_subs.add_parser(
+        "delete",
+        help="Delete a project across Postgres, Qdrant, Neo4j, and the local filesystem.",
+    )
+    project_delete.add_argument("slug")
+    project_delete.add_argument("--yes", action="store_true", required=False)
+    project_delete.add_argument(
+        "--keep-hooks",
+        action="store_true",
+        help="Leave GPC-managed post-commit/post-merge/post-checkout hooks installed.",
+    )
+    project_delete.add_argument(
+        "--keep-local-files",
+        action="store_true",
+        help="Leave .gpc/ and .gpc.yaml in the project / repo roots.",
+    )
+    project_delete.add_argument("--json", action="store_true")
+    project_delete.set_defaults(func=cmd_project_delete)
+
     project_rename = project_subs.add_parser(
         "rename",
         help="Rename a project end-to-end across Postgres, Qdrant, and Neo4j.",
@@ -665,6 +684,56 @@ def cmd_project_list(args: argparse.Namespace) -> int:
             print(f"  repo={repo['slug']} path={repo['root_path']}")
         if not repos:
             print("  (no repos)")
+    return 0
+
+
+def cmd_project_delete(args: argparse.Namespace) -> int:
+    from dataclasses import asdict
+
+    from gpc.project_delete import ProjectDeleteError, delete_project
+
+    if not args.yes:
+        print(
+            "Refuse: pass --yes to confirm. `gpc project delete` wipes the "
+            "project from Postgres (cascade), Qdrant (points), Neo4j (nodes "
+            "+ relationships) and, by default, the GPC-managed hooks and "
+            "`.gpc/` directories in every registered repo root. "
+            "This cannot be undone.",
+            file=sys.stderr,
+        )
+        return 2
+
+    try:
+        stats = delete_project(
+            args.slug,
+            remove_hooks=not args.keep_hooks,
+            remove_local_files=not args.keep_local_files,
+        )
+    except ProjectDeleteError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    if args.json:
+        print(json.dumps(asdict(stats), default=str, indent=2))
+        return 0
+
+    print(
+        f"deleted slug={stats.slug} "
+        f"files={stats.files_deleted} chunks={stats.chunks_deleted} "
+        f"entities={stats.entities_deleted} relations={stats.relations_deleted} "
+        f"repos={stats.repos_deleted} aliases={stats.aliases_deleted} "
+        f"self_metrics={stats.self_metrics_deleted} "
+        f"qdrant_points={stats.qdrant_points_deleted} "
+        f"neo4j_nodes={stats.neo4j_nodes_deleted} "
+        f"neo4j_rels={stats.neo4j_relationships_deleted} "
+        f"hooks_removed={len(stats.hooks_removed)} "
+        f"hooks_skipped={len(stats.hooks_skipped)} "
+        f"local_files_removed={len(stats.local_files_removed)}"
+    )
+    for hook in stats.hooks_skipped:
+        print(f"  skipped (not GPC-managed): {hook}")
+    for warning in stats.warnings:
+        print(f"  warning: {warning}", file=sys.stderr)
     return 0
 
 

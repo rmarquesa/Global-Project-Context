@@ -66,6 +66,32 @@ Expansões naturais que ficam na Fase 2:
       e nota em [docs/token-economy.md](token-economy.md) sobre baseline
       otimista vs economia realista (30–97% dependendo do tipo de pergunta).
 
+## Fase 1.10 — Project delete (entregue)
+
+**Entregue em 2026-04-24.** Simétrico ao rename: apagar um projeto sem
+deixar vestígio em nenhuma das três camadas, nem no filesystem.
+
+- [x] [gpc/project_delete.py](../gpc/project_delete.py):
+      `delete_project(slug, remove_hooks=True, remove_local_files=True)`
+      faz count + cascade delete em Postgres (dentro de transação),
+      delete filtrado em Qdrant, `DETACH DELETE` em todos os labels
+      slug-bearing do Neo4j, e remove por default os hooks git
+      gerenciados pelo GPC + `.gpc.yaml` + `.gpc/` em cada root
+      registrado. Hooks customizados são preservados e reportados em
+      `hooks_skipped`. Canoniza paths (`Path.resolve`) antes de
+      iterar pra evitar tocar o mesmo diretório duas vezes por
+      symlinks tipo `/var` → `/private/var` no macOS.
+- [x] CLI `gpc project delete <slug> --yes [--keep-hooks] [--keep-local-files] [--json]`.
+- [x] Smoke test [tests/smoke/project_delete_smoke_test.py](../tests/smoke/project_delete_smoke_test.py)
+      cria projeto sintético com rows em todas as tabelas, ponto
+      Qdrant, projeção Graphify em Neo4j e filesystem com hook
+      gerenciado + hook custom + `.gpc/` + `.gpc.yaml`. Valida que
+      tudo foi apagado exceto o hook custom e que uma segunda
+      invocação levanta `ProjectDeleteError`.
+- [x] Aplicado contra `l3-games` no ambiente ao vivo (3814 files,
+      9371 chunks, 9125 pontos Qdrant, 3 hooks gerenciados, 1
+      `.gpc.yaml`).
+
 ## Fase 1.9 — Project rename (entregue)
 
 **Entregue em 2026-04-24.** Corrigir slug de projeto (ex.: placeholder que
