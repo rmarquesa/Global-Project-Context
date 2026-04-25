@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from functools import wraps
 import os
+import sys
 import time
 from typing import Any, Callable
 
@@ -46,6 +47,7 @@ ARG_WHITELIST = {
 }
 
 ARG_MAX_CHARS = 400
+TOKEN_SAVINGS_TOOLS = {"gpc.search", "gpc.context", "gpc.estimate_token_savings"}
 
 
 def _client_name() -> str | None:
@@ -108,6 +110,27 @@ def _extract_result_meta(result: Any) -> dict[str, Any]:
             meta[key] = result[key]
     if isinstance(result.get("results"), list):
         meta["results_count"] = len(result["results"])
+        meta["returned_chars"] = sum(
+            len(str(item.get("content", "")))
+            for item in result["results"]
+            if isinstance(item, dict)
+        )
+    if isinstance(result.get("sources"), list):
+        meta["sources_count"] = len(result["sources"])
+    if isinstance(result.get("context"), str):
+        meta["context_chars"] = len(result["context"])
+    if isinstance(result.get("estimate"), dict):
+        estimate = result["estimate"]
+        for key in (
+            "indexed_tokens",
+            "retrieved_tokens",
+            "saved_tokens",
+            "savings_percent",
+            "files",
+            "chunks",
+        ):
+            if key in estimate:
+                meta[key] = estimate[key]
     if isinstance(result.get("neighbors"), list):
         meta["neighbors_count"] = len(result["neighbors"])
     if isinstance(result.get("path"), dict):
@@ -124,7 +147,7 @@ def _write_log(
     success: bool,
     error_type: str | None,
     error_message: str | None,
-) -> None:
+) -> dict[str, Any] | None:
     try:
         with psycopg.connect(POSTGRES_DSN) as conn:
             resolved = result_meta.get("resolved_project") if isinstance(result_meta, dict) else None
@@ -136,7 +159,8 @@ def _write_log(
                 ).fetchone()
                 if row:
                     project_id = row[0]
-            conn.execute(
+            client_name = _client_name()
+            row = conn.execute(
                 """
                 insert into gpc_mcp_calls (
                     tool,
@@ -153,13 +177,14 @@ def _write_log(
                     result_meta
                 )
                 values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                returning id
                 """,
                 (
                     tool,
                     project_id,
                     resolved or args.get("project"),
                     args.get("repo") if isinstance(args.get("repo"), str) else None,
-                    _client_name(),
+                    client_name,
                     args.get("cwd") or _caller_cwd(),
                     duration_ms,
                     success,
@@ -168,13 +193,177 @@ def _write_log(
                     Jsonb(args),
                     Jsonb(result_meta),
                 ),
-            )
+            ).fetchone()
+            return {
+                "id": row[0] if row else None,
+                "project_id": project_id,
+                "project_slug": resolved or args.get("project"),
+                "client_name": client_name,
+            }
     except Exception as exc:  # noqa: BLE001 — never raise from the logger
         # Fall back to stderr so operators can notice observability gaps.
-        import sys
-
         print(
             f"[gpc.mcp.log] failed to log call tool={tool} error={exc!r}",
+            file=sys.stderr,
+        )
+    return None
+
+
+def _int_arg(args: dict[str, Any], key: str) -> int | None:
+    value = args.get(key)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.isdigit():
+        return int(value)
+    return None
+
+
+def _project_from_result(result: Any) -> dict[str, Any] | None:
+    if not isinstance(result, dict):
+        return None
+    project = result.get("project")
+    if isinstance(project, dict):
+        return project
+    estimate = result.get("estimate")
+    if isinstance(estimate, dict) and estimate.get("project_slug"):
+        return {"slug": estimate.get("project_slug"), "name": estimate.get("project_name")}
+    return None
+
+
+def _repo_slug(args: dict[str, Any], result: Any) -> str | None:
+    repo = args.get("repo")
+    if isinstance(repo, str):
+        return repo
+    if isinstance(result, dict) and isinstance(result.get("repo_filter"), str):
+        return result["repo_filter"]
+    return None
+
+
+def _result_text_for_tokens(tool: str, result: dict[str, Any]) -> str:
+    if tool == "gpc.context" and isinstance(result.get("context"), str):
+        return result["context"]
+    if tool == "gpc.search" and isinstance(result.get("results"), list):
+        parts = [
+            item.get("content", "")
+            for item in result["results"]
+            if isinstance(item, dict) and isinstance(item.get("content"), str)
+        ]
+        return "\n\n".join(parts)
+    return ""
+
+
+def _resolve_project_id(project_slug: str | None) -> Any:
+    if not project_slug:
+        return None
+    try:
+        with psycopg.connect(POSTGRES_DSN) as conn:
+            row = conn.execute(
+                "select id from gpc_projects where slug = %s",
+                (project_slug,),
+            ).fetchone()
+        return row[0] if row else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _write_token_savings_sample(
+    *,
+    tool: str,
+    args: dict[str, Any],
+    result: Any,
+    log_info: dict[str, Any] | None,
+) -> None:
+    if tool not in TOKEN_SAVINGS_TOOLS or not isinstance(result, dict) or result.get("ok") is not True:
+        return
+
+    try:
+        project = _project_from_result(result)
+        project_slug = (
+            (log_info or {}).get("project_slug")
+            or (project or {}).get("slug")
+            or args.get("project")
+        )
+        if not isinstance(project_slug, str) or not project_slug:
+            return
+
+        project_id = (log_info or {}).get("project_id") or _resolve_project_id(project_slug)
+        if not project_id:
+            return
+
+        estimate = result.get("estimate") if isinstance(result.get("estimate"), dict) else None
+        if estimate:
+            indexed_tokens = int(estimate.get("indexed_tokens") or 0)
+            retrieved_tokens = int(estimate.get("retrieved_tokens") or 0)
+            saved_tokens = int(estimate.get("saved_tokens") or max(indexed_tokens - retrieved_tokens, 0))
+            savings_percent = float(estimate.get("savings_percent") or 0)
+            returned_chars = 0
+            result_count = None
+        else:
+            from gpc.token_economy import count_tokens, indexed_token_stats
+
+            stats = indexed_token_stats(project_id)
+            text = _result_text_for_tokens(tool, result)
+            indexed_tokens = int(stats.get("indexed_tokens") or 0)
+            retrieved_tokens = count_tokens(text)
+            saved_tokens = max(indexed_tokens - retrieved_tokens, 0)
+            savings_percent = round((saved_tokens / indexed_tokens) * 100, 2) if indexed_tokens else 0
+            returned_chars = len(text)
+            if isinstance(result.get("results"), list):
+                result_count = len(result["results"])
+            elif isinstance(result.get("sources"), list):
+                result_count = len(result["sources"])
+            else:
+                result_count = None
+
+        metadata = {
+            "repo_filter": result.get("repo_filter") if isinstance(result, dict) else args.get("repo"),
+            "estimate_project_name": estimate.get("project_name") if estimate else None,
+        }
+        with psycopg.connect(POSTGRES_DSN) as conn:
+            conn.execute(
+                """
+                insert into gpc_token_savings_samples (
+                    mcp_call_id,
+                    tool,
+                    project_id,
+                    project_slug,
+                    repo_slug,
+                    query,
+                    indexed_tokens,
+                    retrieved_tokens,
+                    saved_tokens,
+                    savings_percent,
+                    returned_chars,
+                    max_chunks,
+                    max_chars,
+                    result_count,
+                    client_name,
+                    metadata
+                )
+                values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    (log_info or {}).get("id"),
+                    tool,
+                    project_id,
+                    project_slug,
+                    _repo_slug(args, result),
+                    args.get("query") if isinstance(args.get("query"), str) else None,
+                    indexed_tokens,
+                    retrieved_tokens,
+                    saved_tokens,
+                    savings_percent,
+                    returned_chars,
+                    _int_arg(args, "max_chunks") or _int_arg(args, "limit"),
+                    _int_arg(args, "max_chars") or _int_arg(args, "content_chars"),
+                    result_count,
+                    (log_info or {}).get("client_name") or _client_name(),
+                    Jsonb(metadata),
+                ),
+            )
+    except Exception as exc:  # noqa: BLE001 — telemetry must not break MCP calls
+        print(
+            f"[gpc.token_savings.log] failed to log sample tool={tool} error={exc!r}",
             file=sys.stderr,
         )
 
@@ -211,14 +400,21 @@ def log_mcp_call(tool_name: str) -> Callable:
                 raise
             finally:
                 duration_ms = int((time.perf_counter() - started) * 1000)
-                _write_log(
+                filtered_args = _filter_args(kwargs)
+                log_info = _write_log(
                     tool=tool_name,
-                    args=_filter_args(kwargs),
+                    args=filtered_args,
                     result_meta=_extract_result_meta(result) if isinstance(result, dict) else {},
                     duration_ms=duration_ms,
                     success=success,
                     error_type=error_type,
                     error_message=error_message,
+                )
+                _write_token_savings_sample(
+                    tool=tool_name,
+                    args=filtered_args,
+                    result=result,
+                    log_info=log_info,
                 )
 
         return wrapper

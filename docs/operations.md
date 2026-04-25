@@ -32,6 +32,15 @@ The installer performs the following steps:
    machine.
 9. Runs a smoke validation pass.
 
+Grafana is optional and runs under its own Compose profile:
+
+```bash
+docker compose --profile observability up -d grafana
+```
+
+The provisioned dashboard is available at `http://localhost:3000` with default
+credentials `admin / gpcgrafanapass`.
+
 ### Common options
 
 | Flag | Effect |

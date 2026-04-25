@@ -1,0 +1,17 @@
+apiVersion: 1
+
+datasources:
+  - name: GPC Postgres
+    uid: gpc-postgres
+    type: postgres
+    access: proxy
+    url: ${GPC_POSTGRES_HOST}
+    user: ${GPC_POSTGRES_USER}
+    database: ${GPC_POSTGRES_DB}
+    isDefault: true
+    jsonData:
+      sslmode: disable
+      postgresVersion: 1700
+      timescaledb: false
+    secureJsonData:
+      password: ${GPC_POSTGRES_PASSWORD}
