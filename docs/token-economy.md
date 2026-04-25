@@ -18,6 +18,10 @@ ask question → retrieve relevant chunks → send compact context
 This document explains how `gpc token-savings` measures that reduction, what
 the numbers mean, and what they do not include.
 
+For ongoing metrics, GPC also writes token-economy samples to Postgres whenever
+`gpc.search`, `gpc.context` or `gpc.estimate_token_savings` succeeds through
+the MCP server. See [Observability](observability.md) for the Grafana dashboard.
+
 ## Measuring Savings
 
 Run from any indexed project:

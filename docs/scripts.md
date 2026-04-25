@@ -77,6 +77,11 @@ SQL migrations live under `migrations/` and are applied in order by
 | `migrations/0001_initial_schema.sql` | Core tables: projects, files, chunks, runs. |
 | `migrations/0002_project_aliases_sources.sql` | Project aliases and external sources. |
 | `migrations/0003_graph_projections.sql` | Neo4j projection run tracking. |
+| `migrations/0004_gpc_repos.sql` | Logical project / repository registry. |
+| `migrations/0005_repo_scoped_uniqueness.sql` | Repo-scoped file and chunk constraints. |
+| `migrations/0006_mcp_call_log.sql` | MCP tool-call audit log. |
+| `migrations/0007_gpc_self_metrics.sql` | Self-metrics snapshots for index and graph runs. |
+| `migrations/0008_token_savings_samples.sql` | Persisted token-economy samples for Grafana. |
 
 ## Examples
 

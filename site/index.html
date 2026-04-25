@@ -106,6 +106,7 @@
         <a href="#pipeline">Pipeline</a>
         <a href="#explorer">Explore the graph</a>
         <a href="#demo">Live MCP demo</a>
+        <a href="#observability">Observability</a>
         <a href="#multi">Multi-repo</a>
         <a href="#faq">FAQ</a>
         <a href="https://github.com/rmarquesa/Global-Project-Context" target="_blank" rel="noreferrer">GitHub</a>
@@ -262,6 +263,61 @@
               <strong><span data-demo-saved>0</span>%</strong>
               <small>Measured with <code>gpc token-savings</code> on this repository</small>
             </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="observability" class="section observabilitySection" aria-labelledby="observability-title">
+        <div class="section__intro">
+          <p class="kicker">Observability</p>
+          <h2 id="observability-title">Token economy you can audit in Grafana.</h2>
+          <p class="section__lead">
+            Every MCP call is logged to Postgres. Search, context and token
+            savings calls also emit compact token-economy samples that Grafana
+            turns into an operational dashboard.
+          </p>
+        </div>
+
+        <div class="observabilityGrid">
+          <div class="observabilityFlow" aria-label="GPC observability pipeline">
+            <div>
+              <span>MCP call</span>
+              <strong>gpc.context</strong>
+              <small>query, project, repo, duration, result count</small>
+            </div>
+            <div>
+              <span>Postgres</span>
+              <strong>samples</strong>
+              <small>indexed, retrieved and saved token counts</small>
+            </div>
+            <div>
+              <span>Grafana</span>
+              <strong>dashboard</strong>
+              <small>calls, errors, savings, repos and slow queries</small>
+            </div>
+          </div>
+
+          <div class="grafanaPreview" aria-label="Grafana token economy dashboard preview">
+            <header>
+              <span>GPC Token Economy</span>
+              <code>last 24h</code>
+            </header>
+            <div class="grafanaStats">
+              <div><small>Saved tokens</small><strong>24.3k</strong></div>
+              <div><small>Average saving</small><strong>94.6%</strong></div>
+              <div><small>MCP calls</small><strong>128</strong></div>
+            </div>
+            <div class="grafanaChart" aria-hidden="true">
+              <span style="height: 36%"></span>
+              <span style="height: 54%"></span>
+              <span style="height: 42%"></span>
+              <span style="height: 68%"></span>
+              <span style="height: 60%"></span>
+              <span style="height: 82%"></span>
+              <span style="height: 74%"></span>
+              <span style="height: 90%"></span>
+            </div>
+            <pre><code>docker compose --profile observability up -d grafana</code></pre>
           </div>
         </div>
       </section>

@@ -55,6 +55,7 @@ admin modules live under `scripts/`. Smoke tests live under `tests/smoke/`.
 - [Automation](docs/automation.md) — global CLI shims and per-project Git hooks.
 - [Graphify and Neo4j](docs/graphify.md) — relationship-graph consolidation.
 - [Token economy](docs/token-economy.md) — what GPC saves and how it is measured.
+- [Observability](docs/observability.md) — Grafana dashboard and Postgres metrics.
 - [Quickstart with 3 projects](docs/quickstart-3-projects.md) — multi-repo example.
 - [Scripts](docs/scripts.md) — package and command inventory.
 - [Roadmap](docs/roadmap.md) — planned MCP graph tools, multi-project audit, and auto-research loop.
@@ -224,6 +225,10 @@ GPC_NEO4J_BOLT_PORT=7687
 GPC_MCP_HTTP_HOST=127.0.0.1
 GPC_MCP_HTTP_PORT=8765
 GPC_MCP_HTTP_PATH=/mcp
+
+GPC_GRAFANA_PORT=3000
+GPC_GRAFANA_ADMIN_USER=admin
+GPC_GRAFANA_ADMIN_PASSWORD=gpcgrafanapass
 ```
 
 For shared machines, change the default passwords before starting services.
@@ -252,6 +257,15 @@ Validate the installation:
 gpc doctor
 gpc install-clients --validate-only
 ```
+
+Start the optional Grafana dashboard:
+
+```bash
+docker compose --profile observability up -d grafana
+```
+
+Grafana opens at `http://localhost:3000` and automatically provisions the
+`GPC Token Economy` dashboard from this repository.
 
 ### 4. Configure AI Clients
 

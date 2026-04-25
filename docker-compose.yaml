@@ -81,6 +81,30 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
+  grafana:
+    image: grafana/grafana:11.5.2
+    container_name: gpc_grafana
+    profiles:
+      - observability
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GPC_GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GPC_GRAFANA_ADMIN_PASSWORD:-gpcgrafanapass}
+      GF_USERS_DEFAULT_THEME: dark
+      GPC_POSTGRES_HOST: postgres:5432
+      GPC_POSTGRES_USER: ${GPC_POSTGRES_USER:-gpc}
+      GPC_POSTGRES_PASSWORD: ${GPC_POSTGRES_PASSWORD:-gpcpass}
+      GPC_POSTGRES_DB: ${GPC_POSTGRES_DB:-gpc}
+    ports:
+      - "${GPC_GRAFANA_PORT:-3000}:3000"
+    volumes:
+      - gpc_grafana_data:/var/lib/grafana
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+
 volumes:
   gpc_postgres_data:
     name: gpc_postgres_data
@@ -90,3 +114,5 @@ volumes:
     name: gpc_neo4j_data
   gpc_neo4j_logs:
     name: gpc_neo4j_logs
+  gpc_grafana_data:
+    name: gpc_grafana_data
