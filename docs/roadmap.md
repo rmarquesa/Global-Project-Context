@@ -66,6 +66,25 @@ Expansões naturais que ficam na Fase 2:
       e nota em [docs/token-economy.md](token-economy.md) sobre baseline
       otimista vs economia realista (30–97% dependendo do tipo de pergunta).
 
+### Fase 1.7.1 — Grafana e retenção (entregue)
+
+**Entregue em 2026-04-26.** Observabilidade deixa de ser só auditoria SQL e
+vira dashboard operacional.
+
+- [x] Migration `0008_token_savings_samples.sql` cria
+      `gpc_token_savings_samples`, preenchida automaticamente por
+      `gpc.search`, `gpc.context` e `gpc.estimate_token_savings`.
+- [x] `docker-compose.yaml` ganha serviço `grafana` no profile
+      `observability`, com datasource Postgres e dashboard versionado em
+      `observability/grafana/`.
+- [x] [docs/observability.md](observability.md) documenta dashboard,
+      retention e queries úteis.
+- [x] CLI `gpc maintenance retention --mcp-days 30 --token-days 90`
+      remove linhas antigas de `gpc_mcp_calls` e
+      `gpc_token_savings_samples`.
+- [x] `gpc install-clients` passa a rotular clientes suportados com
+      `GPC_MCP_CLIENT=<client>`.
+
 ## Fase 1.10 — Project delete (entregue)
 
 **Entregue em 2026-04-24.** Simétrico ao rename: apagar um projeto sem
@@ -128,12 +147,12 @@ diff. Detectores de drift herdam disso depois.
 - [x] Smoke test [tests/smoke/self_metrics_smoke_test.py](../tests/smoke/self_metrics_smoke_test.py)
       valida collect + diff.
 - [x] Docs: architecture.md (5 superfícies agora), mcp-clients.md tabela
-      expandida para 16 tools, README atualizado.
+      expandida para 17 tools, README atualizado.
 
 Próximos passos naturais em cima disto (continuam Fase 3):
-- [ ] Detector de drift — rule-based em cima de `graph_diff` (ex.:
-      alerta quando confidence_shift.INFERRED > +10pp; quando god-node
-      top-3 mudou; quando weakly-connected subiu >50%).
+- [x] Detector de drift — entregue em 2026-04-26 com migration
+      `0009_drift_signals.sql`, módulo [gpc/drift.py](../gpc/drift.py),
+      CLI `gpc metrics drift/signals` e MCP `gpc.drift_signals`.
 - [ ] Job cron semanal que roda `gpc metrics collect` para cada projeto
       (já que hooks só disparam quando há write; projetos parados
       ficariam sem snapshots novos).
@@ -168,13 +187,6 @@ escritas via CLI/hooks.
       [tests/smoke/graph_quality_smoke_test.py](../tests/smoke/graph_quality_smoke_test.py)
       cobrindo classificação de god nodes, `graph_community`, entity
       extractor em projeto temporário.
-
-## Fase 1.7 gaps naturais (próxima iteração de observabilidade):
-- [ ] Hook em clients oficiais para preencher `GPC_MCP_CLIENT` (hoje só
-      clientes que setam variáveis próprias — Claude Code, Codex, Copilot —
-      são identificados automaticamente).
-- [ ] Job de retenção (`DELETE FROM gpc_mcp_calls WHERE called_at < now() -
-      interval '30 days'`) documentado como cron exemplo.
 
 ## Fase 1 (original) — Grafo estrutural acessível pelo MCP (opt-in)
 
@@ -369,17 +381,20 @@ Arquivo novo: `gpc/self_metrics.py`. Migração nova em
 
 ### 3.2 Detecção de drift
 
+**Entregue em 2026-04-26.** O detector inicial é rule-based, grava sinais em
+`gpc_drift_signals`, e nunca executa mudanças.
+
 Após cada `gpc-index` ou `graphify update`, comparar com o snapshot anterior
 e emitir sinais — nunca ações:
 
-- God node desapareceu do top-10 → possível refactor mudou o núcleo.
-- Community dobrou de tamanho → possível erosão de fronteiras.
-- % INFERRED subiu >10 pp → extração perdeu sinais estruturais.
-- Novo nó com grau >15 aparecendo sem histórico → hub criado recentemente,
-  merece atenção.
+- [x] Top-3 god nodes mudou → possível refactor mudou o núcleo.
+- [x] Community count subiu >50% e pelo menos 3 communities.
+- [x] % INFERRED subiu >10 pp → extração perdeu sinais estruturais.
+- [x] Weakly-connected nodes subiu >50% e pelo menos 10 nodes.
 
-Implementação: job offline, grava `gpc_drift_signals`. Exposto via
-`gpc.drift_signals(project)` (tool MCP opt-in).
+Implementação: job offline em [gpc/drift.py](../gpc/drift.py), grava
+`gpc_drift_signals`. Exposto via `gpc metrics drift`, `gpc metrics signals`
+e `gpc.drift_signals(project)` (tool MCP opt-in).
 
 ### 3.3 Loop de auto-proposição (humano-no-loop)
 

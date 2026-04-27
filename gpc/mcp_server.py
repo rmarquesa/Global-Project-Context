@@ -21,6 +21,7 @@ from gpc.config import (
     QDRANT_PORT,
 )
 from gpc.embeddings import active_embedding_model, embedding_dimension
+from gpc.drift import detect_drift, list_drift_signals
 from gpc.graph_query import (
     ALLOWED_CONFIDENCES,
     graph_community,
@@ -471,6 +472,47 @@ def mcp_graph_diff(
         )
         payload["project"] = _project_payload(resolved)
         return {"ok": True, **_json_safe(payload)}
+    except Exception as exc:
+        return {"ok": False, "error": _error_payload(exc)}
+
+
+@mcp.tool(name="gpc.drift_signals")
+@log_mcp_call("gpc.drift_signals")
+def mcp_drift_signals(
+    project: str | None = None,
+    cwd: str | None = None,
+    window_hours: int = 24,
+    detect: bool = False,
+    persist: bool = True,
+    limit: int = 20,
+) -> dict[str, Any]:
+    """List stored drift signals, optionally detecting a fresh diff first.
+
+    Set ``detect=true`` to compare the latest self-metrics snapshot against
+    the prior snapshot older than ``window_hours`` and persist any emitted
+    rule-based signals.
+    """
+    try:
+        resolved = resolve_project(project=project, cwd=_effective_cwd(cwd))
+        detected = None
+        if detect:
+            detected = detect_drift(
+                resolved["slug"],
+                window_hours=max(1, min(int(window_hours), 24 * 365)),
+                persist=bool(persist),
+            )
+        rows = list_drift_signals(
+            project_slug=resolved["slug"],
+            unresolved_only=True,
+            limit=max(1, min(int(limit), 100)),
+        )
+        return {
+            "ok": True,
+            "project": _project_payload(resolved),
+            "detected": _json_safe(detected) if detected else None,
+            "count": len(rows),
+            "signals": _json_safe(rows),
+        }
     except Exception as exc:
         return {"ok": False, "error": _error_payload(exc)}
 

@@ -40,6 +40,7 @@ async def main() -> None:
                 "gpc.graph_path",
                 "gpc.graph_community",
                 "gpc.graph_diff",
+                "gpc.drift_signals",
                 "gpc.self_metrics",
                 "gpc.mcp_usage",
             }

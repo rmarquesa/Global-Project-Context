@@ -9,7 +9,7 @@ installation, transport options and troubleshooting.
 
 ## MCP Tools
 
-The server exposes sixteen read-only tools.
+The server exposes seventeen read-only tools.
 
 | Tool | Purpose | Key inputs |
 |---|---|---|
@@ -28,6 +28,7 @@ The server exposes sixteen read-only tools.
 | `gpc.graph_community` | Members, repos and external bridges of one community. Run after `graph_summary` to drill into a cluster. | `community_id`, `cwd`/`project`, `top_members`, `top_external_bridges` |
 | `gpc.self_metrics` | List recent ``gpc_self_metrics`` snapshots for a project; optionally collect a fresh one first. | `cwd`/`project`, `limit`, `collect`, `source` |
 | `gpc.graph_diff` | Diff two metric snapshots: numeric deltas, god-node churn, confidence-distribution shift. | `cwd`/`project`, `window_hours`, `from_id`, `to_id` |
+| `gpc.drift_signals` | List stored drift signals; optionally detect and persist fresh rule-based signals from the latest metric snapshots. | `cwd`/`project`, `window_hours`, `detect`, `persist`, `limit` |
 | `gpc.mcp_usage` | Aggregates the server's own call log. Use it to confirm AI clients are actually hitting GPC. | `window_hours`, `cwd`/`project` |
 
 **Project resolution**. Every tool accepts either `project` (a registered slug
@@ -97,15 +98,16 @@ order by calls desc;
 **Client identification** is best-effort: some environments set
 `CLAUDE_CODE_SESSION_ID` / `CODEX_CLI_VERSION` / `COPILOT_AGENT_VERSION`
 when they spawn the MCP server, and the log picks those up automatically.
-If you want explicit labels, set `GPC_MCP_CLIENT=<name>` in the client's
-MCP config before launching the server. Unknown clients are logged as
-`unknown` rather than dropped.
+`gpc install-clients` labels supported clients explicitly with
+`GPC_MCP_CLIENT=<client>`. If you wire a client manually, add the same
+environment variable in that client's MCP config. Unknown clients are logged
+as `unknown` rather than dropped.
 
-**Retention** is the operator's responsibility. For steady-state use,
-truncate old rows with a cron job:
+**Retention** is available through the maintenance CLI. A cron-friendly dry
+run looks like:
 
-```sql
-delete from gpc_mcp_calls where called_at < now() - interval '30 days';
+```bash
+gpc maintenance retention --mcp-days 30 --token-days 90 --dry-run
 ```
 
 **Failure mode**: if Postgres is unreachable when a tool call happens, the
@@ -157,8 +159,12 @@ shape:
 {
   "mcpServers": {
     "gpc": {
-      "command": "/absolute/path/to/GPC/venv/bin/python",
-      "args": ["/absolute/path/to/GPC/gpc_mcp_server.py"],
+      "command": "/usr/bin/env",
+      "args": [
+        "GPC_MCP_CLIENT=manual",
+        "/absolute/path/to/GPC/venv/bin/python",
+        "/absolute/path/to/GPC/gpc_mcp_server.py"
+      ],
       "cwd": "/absolute/path/to/GPC"
     }
   }

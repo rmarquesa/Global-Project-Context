@@ -1,6 +1,6 @@
 // Interactive graph viewer for Global Project Context.
 // Zero dependencies — hand-rolled verlet force simulation on a 2D canvas.
-// Data: site/data/graph.json — 179 real nodes, 499 edges from this repo.
+// Data: site/data/graph.json — 627 real nodes, 1250 edges from this repo.
 
 const COMMUNITY_PALETTE = [
   "#1f8a70", // 0 — primary accent (green)
@@ -275,7 +275,7 @@ class Graph {
     const damping = 0.6;
     const maxV = 8;
 
-    // Repulsion (O(n^2) but n=179 is fine)
+    // Repulsion (O(n^2) but n=627 is fine)
     for (let i = 0; i < n; i++) {
       const a = nodes[i];
       for (let j = i + 1; j < n; j++) {

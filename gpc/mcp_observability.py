@@ -59,8 +59,11 @@ def _client_name() -> str | None:
     tagging (set by ``gpc install-clients`` templates in the future).
     """
 
+    explicit = os.environ.get("GPC_MCP_CLIENT")
+    if explicit:
+        return explicit.strip().lower()[:80]
+
     for var in (
-        "GPC_MCP_CLIENT",
         "CLAUDE_CODE_SESSION_ID",  # Claude Code sets this when it spawns stdio servers
         "CODEX_CLI_VERSION",
         "COPILOT_AGENT_VERSION",
