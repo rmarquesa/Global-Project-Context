@@ -1,8 +1,10 @@
 {
   "mcpServers": {
     "gpc": {
-      "command": "/absolute/path/to/GPC/venv/bin/python",
+      "command": "/usr/bin/env",
       "args": [
+        "GPC_MCP_CLIENT=manual",
+        "/absolute/path/to/GPC/venv/bin/python",
         "/absolute/path/to/GPC/gpc_mcp_server.py"
       ],
       "cwd": "/absolute/path/to/GPC"
