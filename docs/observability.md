@@ -74,6 +74,24 @@ gpc migrate up
 Samples are not retroactive. The dashboard starts filling after new MCP calls
 hit `gpc.search`, `gpc.context` or `gpc.estimate_token_savings`.
 
+## Retention
+
+For steady-state use, prune old observability rows with the maintenance
+command:
+
+```bash
+gpc maintenance retention --mcp-days 30 --token-days 90
+```
+
+Preview first:
+
+```bash
+gpc maintenance retention --mcp-days 30 --token-days 90 --dry-run
+```
+
+The command deletes old rows from `gpc_mcp_calls` and
+`gpc_token_savings_samples`; it does not touch indexed project data.
+
 ## Useful SQL
 
 Recent samples:

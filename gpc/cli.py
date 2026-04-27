@@ -305,6 +305,44 @@ def build_parser() -> argparse.ArgumentParser:
     metrics_list.add_argument("--json", action="store_true")
     metrics_list.set_defaults(func=cmd_metrics_list)
 
+    metrics_drift = metrics_subs.add_parser(
+        "drift",
+        help="Detect graph drift between two metric snapshots.",
+    )
+    metrics_drift.add_argument("--project", required=True)
+    metrics_drift.add_argument("--window-hours", type=int, default=24)
+    metrics_drift.add_argument("--from-id")
+    metrics_drift.add_argument("--to-id")
+    metrics_drift.add_argument("--no-persist", action="store_true")
+    metrics_drift.add_argument("--json", action="store_true")
+    metrics_drift.set_defaults(func=cmd_metrics_drift)
+
+    metrics_signals = metrics_subs.add_parser(
+        "signals",
+        help="List stored drift signals.",
+    )
+    metrics_signals.add_argument("--project")
+    metrics_signals.add_argument("--limit", type=int, default=50)
+    metrics_signals.add_argument("--all", action="store_true", help="Include resolved signals.")
+    metrics_signals.add_argument("--json", action="store_true")
+    metrics_signals.set_defaults(func=cmd_metrics_signals)
+
+    maintenance_parser = subparsers.add_parser(
+        "maintenance",
+        help="Operational maintenance tasks for local GPC data.",
+    )
+    maintenance_subs = maintenance_parser.add_subparsers(dest="maintenance_cmd", required=True)
+
+    retention_parser = maintenance_subs.add_parser(
+        "retention",
+        help="Delete old observability rows from Postgres.",
+    )
+    retention_parser.add_argument("--mcp-days", type=int, default=30)
+    retention_parser.add_argument("--token-days", type=int, default=90)
+    retention_parser.add_argument("--dry-run", action="store_true")
+    retention_parser.add_argument("--json", action="store_true")
+    retention_parser.set_defaults(func=cmd_maintenance_retention)
+
     bridge_parser = subparsers.add_parser(
         "graph-bridge",
         help="Create CROSS_REPO_BRIDGE edges between GraphifyNodes of a project.",
@@ -1015,6 +1053,73 @@ def cmd_metrics_list(args: argparse.Namespace) -> int:
             f"nodes={row.get('graphify_nodes')} bridges={row.get('cross_repo_bridges')} "
             f"weak={row.get('weakly_connected_nodes')} comms={row.get('community_count')}"
         )
+    return 0
+
+
+def cmd_metrics_drift(args: argparse.Namespace) -> int:
+    from gpc.drift import detect_drift
+
+    result = detect_drift(
+        args.project,
+        window_hours=args.window_hours,
+        from_id=args.from_id,
+        to_id=args.to_id,
+        persist=not args.no_persist,
+    )
+    if args.json:
+        print(json.dumps(result, default=str, indent=2))
+        return 0
+    if not result.get("found"):
+        print(f"drift_found=false reason={result.get('reason')}")
+        return 0
+    print(
+        f"drift_found=true project={result['project_slug']} "
+        f"signals={len(result['signals'])} persisted={result['persisted']}"
+    )
+    for signal in result["signals"]:
+        print(f"  {signal['severity']:<8} {signal['signal_type']}: {signal['message']}")
+    return 0
+
+
+def cmd_metrics_signals(args: argparse.Namespace) -> int:
+    from gpc.drift import list_drift_signals
+
+    rows = list_drift_signals(
+        project_slug=args.project,
+        unresolved_only=not args.all,
+        limit=args.limit,
+    )
+    if args.json:
+        print(json.dumps(rows, default=str, indent=2))
+        return 0
+    if not rows:
+        print("No drift signals recorded.")
+        return 0
+    for row in rows:
+        print(
+            f"{row['created_at']}  {row['project_slug']:<25} "
+            f"{row['severity']:<8} {row['signal_type']:<30} {row['message']}"
+        )
+    return 0
+
+
+def cmd_maintenance_retention(args: argparse.Namespace) -> int:
+    from gpc.retention import apply_retention
+
+    result = apply_retention(
+        mcp_days=args.mcp_days,
+        token_days=args.token_days,
+        dry_run=args.dry_run,
+    )
+    if args.json:
+        print(json.dumps(result.as_dict(), indent=2))
+        return 0
+    verb = "would_delete" if result.dry_run else "deleted"
+    print(
+        f"{verb} mcp_calls={result.mcp_calls} "
+        f"token_savings_samples={result.token_savings_samples} "
+        f"mcp_days={result.mcp_days} token_days={result.token_days}"
+    )
     return 0
 
 

@@ -386,7 +386,7 @@ Setup steps, environment variables and Cypher examples live in
 
 ## MCP Tools
 
-The MCP server exposes sixteen read-only tools:
+The MCP server exposes seventeen read-only tools:
 
 - `gpc.health` — service availability.
 - `gpc.resolve_project` — look up a project by `cwd` or slug.
@@ -403,6 +403,7 @@ The MCP server exposes sixteen read-only tools:
 - `gpc.graph_community` — drill into a community: members, repos, external bridges.
 - `gpc.self_metrics` — list or record longitudinal metric snapshots for a project.
 - `gpc.graph_diff` — diff two snapshots (numeric deltas, god-node churn, confidence shift).
+- `gpc.drift_signals` — detect and list rule-based drift signals.
 - `gpc.mcp_usage` — aggregate call log so you can confirm clients are hitting GPC.
 
 Pass `project` when you know the slug, or `cwd` when the client is operating

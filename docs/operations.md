@@ -130,6 +130,29 @@ gpc token-savings "how does authentication work?" --project project-slug
 the last few index runs. Use it to confirm coverage before relying on
 retrieval.
 
+## Maintenance
+
+Observability rows are useful for Grafana and audits, but they should not grow
+forever on a workstation. Preview retention first:
+
+```bash
+gpc maintenance retention --mcp-days 30 --token-days 90 --dry-run
+```
+
+Apply it from cron or manually:
+
+```bash
+gpc maintenance retention --mcp-days 30 --token-days 90
+```
+
+Drift detection compares metric snapshots and records advisory signals:
+
+```bash
+gpc metrics collect --project project-slug
+gpc metrics drift --project project-slug
+gpc metrics signals --project project-slug
+```
+
 ## Reset Local State
 
 Drop everything and rebuild from scratch:

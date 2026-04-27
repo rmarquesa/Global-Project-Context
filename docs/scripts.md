@@ -82,6 +82,7 @@ SQL migrations live under `migrations/` and are applied in order by
 | `migrations/0006_mcp_call_log.sql` | MCP tool-call audit log. |
 | `migrations/0007_gpc_self_metrics.sql` | Self-metrics snapshots for index and graph runs. |
 | `migrations/0008_token_savings_samples.sql` | Persisted token-economy samples for Grafana. |
+| `migrations/0009_drift_signals.sql` | Rule-based graph drift signals. |
 
 ## Examples
 
@@ -119,7 +120,7 @@ The repository root stays focused on project-level assets:
 | `CONTRIBUTING.md` | Contributor guide. |
 | `SECURITY.md` | Security policy. |
 | `Dockerfile` | Optional image for HTTP MCP. |
-| `docker-compose.yaml` | Local Postgres, Qdrant, Neo4j and optional HTTP MCP. |
+| `docker-compose.yaml` | Local Postgres, Qdrant, Neo4j, optional HTTP MCP and optional Grafana. |
 | `.env.example` | Local service configuration template. |
 | `install.sh` | One-shot installer. |
 | `gpc_mcp_server.py` | Stable MCP entrypoint wrapper. |

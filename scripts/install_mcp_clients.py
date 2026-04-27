@@ -75,7 +75,7 @@ def main() -> int:
         for client in clients:
             install_client(
                 client,
-                config,
+                server_config(client),
                 timestamp=timestamp,
                 dry_run=args.dry_run,
                 backup=not args.no_backup,
@@ -85,7 +85,7 @@ def main() -> int:
         print("dry_run=true; validation skipped")
         return 0
 
-    ok = validate_installation(clients, config, skip_smoke=args.skip_smoke)
+    ok = validate_installation(clients, skip_smoke=args.skip_smoke)
     return 0 if ok else 1
 
 
@@ -101,19 +101,24 @@ def parse_clients(value: str) -> list[str]:
     return raw
 
 
-def server_config() -> dict[str, object]:
+def server_config(client: str | None = None) -> dict[str, object]:
     python = ROOT / "venv" / "bin" / "python"
     server = ROOT / "gpc_mcp_server.py"
+    label = client or "unknown"
     return {
-        "command": str(python),
-        "args": [str(server)],
+        "command": "/usr/bin/env",
+        "args": [f"GPC_MCP_CLIENT={label}", str(python), str(server)],
         "cwd": str(ROOT),
     }
 
 
 def validate_server_paths(config: dict[str, object]) -> None:
     command = Path(str(config["command"]))
-    args = [Path(str(arg)) for arg in config["args"]]  # type: ignore[index]
+    args = [
+        Path(str(arg))
+        for arg in config["args"]  # type: ignore[index]
+        if str(arg).startswith("/")
+    ]
 
     missing = [path for path in [command, *args] if not path.exists()]
     if missing:
@@ -338,7 +343,6 @@ def upsert_mcp_servers_config(
 
 def validate_installation(
     clients: Iterable[str],
-    config: dict[str, object],
     *,
     skip_smoke: bool,
 ) -> bool:
@@ -357,6 +361,7 @@ def validate_installation(
         ok = ok and result.returncode == 0 and "mcp_smoke_test=passed" in result.output
 
     for client in clients:
+        config = server_config(client)
         print(f"==> validating {client}")
         if client == "codex":
             ok = validate_cli_output(["codex", "mcp", "get", SERVER_NAME]) and ok
