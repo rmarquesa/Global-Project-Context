@@ -44,22 +44,34 @@ git clone https://github.com/rmarquesa/Global-Project-Context.git
 cd Global-Project-Context
 cp .env.example .env
 ./install.sh --skip-clients
+./venv/bin/python -m pip install -r requirements-dev.txt
 ```
 
 `--skip-clients` avoids touching your real Codex/Claude/Copilot configurations
 during development. Drop the flag once you want to validate end-to-end with a
-real client.
+real client. `requirements-dev.txt` installs the documented formatter, linter,
+CI quality tools and local test runner.
 
 ### Verify the environment
 
 ```bash
 gpc doctor
-./venv/bin/python -m tests.smoke.embedding_smoke_test
-./venv/bin/python -m tests.smoke.search_test
-./venv/bin/python -m tests.smoke.mcp_smoke_test
+./scripts/run_smoke_tests.sh
 ```
 
-All three smoke tests should report success against the local Docker services.
+For quality checks that do not require live services:
+
+```bash
+./venv/bin/python -m compileall -q gpc scripts tests
+./venv/bin/python -m ruff check --select E9,F63,F7,F82 gpc scripts tests
+changed_py=$(git diff --name-only origin/main...HEAD -- '*.py')
+if [ -n "$changed_py" ]; then
+  printf '%s\n' "$changed_py" | xargs ./venv/bin/python -m ruff check
+  printf '%s\n' "$changed_py" | xargs ./venv/bin/python -m black --check
+fi
+```
+
+The smoke script should report success against the local Docker services and Ollama.
 
 ## Project Layout
 
@@ -91,8 +103,13 @@ A more detailed inventory lives in [docs/scripts.md](docs/scripts.md).
 Run before committing:
 
 ```bash
-./venv/bin/python -m ruff check gpc scripts tests
-./venv/bin/python -m black --check gpc scripts tests
+./venv/bin/python -m compileall -q gpc scripts tests
+./venv/bin/python -m ruff check --select E9,F63,F7,F82 gpc scripts tests
+changed_py=$(git diff --name-only origin/main...HEAD -- '*.py')
+if [ -n "$changed_py" ]; then
+  printf '%s\n' "$changed_py" | xargs ./venv/bin/python -m ruff check
+  printf '%s\n' "$changed_py" | xargs ./venv/bin/python -m black --check
+fi
 ```
 
 ## Testing
@@ -106,6 +123,8 @@ real Postgres, Qdrant, Ollama and Neo4j services.
 | `tests.smoke.search_test` | Qdrant returns hydrated chunks for a known query. |
 | `tests.smoke.registry_smoke_test` | Project resolution by slug, alias and `cwd`. |
 | `tests.smoke.graph_projection_smoke_test` | Neo4j projection round-trips. |
+| `tests.smoke.graph_query_smoke_test` | Graph query helpers return expected paths and neighbors. |
+| `tests.smoke.mcp_observability_smoke_test` | MCP call logging and usage reporting work. |
 | `tests.smoke.mcp_smoke_test` | The MCP server exposes the expected tools over stdio. |
 
 Add a new smoke test when introducing or changing:

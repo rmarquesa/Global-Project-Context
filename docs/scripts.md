@@ -98,12 +98,11 @@ End-to-end tests live under `tests/smoke/`. They require the Docker services
 and Ollama to be running.
 
 ```bash
-./venv/bin/python -m tests.smoke.embedding_smoke_test
-./venv/bin/python -m tests.smoke.search_test
-./venv/bin/python -m tests.smoke.registry_smoke_test
-./venv/bin/python -m tests.smoke.graph_projection_smoke_test
-./venv/bin/python -m tests.smoke.mcp_smoke_test
+./scripts/run_smoke_tests.sh
 ```
+
+The wrapper is the source of truth for smoke-test order; it refreshes the Qdrant
+bootstrap seed before search assertions and then runs the live-service checks.
 
 See [CONTRIBUTING.md](../CONTRIBUTING.md#testing) for guidance on when to add
 new smoke coverage.

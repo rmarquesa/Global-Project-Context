@@ -1,5 +1,4 @@
 import argparse
-from pathlib import Path
 
 from gpc.config import (
     COLLECTION_NAME,
@@ -11,7 +10,6 @@ from gpc.config import (
 from gpc.embeddings import active_embedding_model, embed_texts
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, PointStruct, VectorParams
-
 
 SEED_TEXT = "Initializes the Global Project Context Qdrant memory collection."
 
@@ -32,6 +30,7 @@ def build_seed_point() -> PointStruct:
             "project_name": "GPC",
             "root_path": str(ROOT_DIR),
             "file_path": "scripts/init_qdrant.py",
+            "source_type": "bootstrap",
             "chunk_type": "bootstrap",
             "summary": SEED_TEXT,
         },
@@ -75,16 +74,23 @@ def ensure_collection(client: QdrantClient, vector_size: int) -> None:
             "Run `./venv/bin/python -m scripts.init_qdrant --reset` to recreate it."
         )
 
-    print(f"Collection '{COLLECTION_NAME}' already exists with vector size {existing_size}.")
+    print(
+        f"Collection '{COLLECTION_NAME}' already exists with vector size {existing_size}."
+    )
 
 
 def upsert_seed_point(client: QdrantClient, seed_point: PointStruct) -> None:
     client.upsert(collection_name=COLLECTION_NAME, points=[seed_point])
-    print("Seed point inserted with Ollama embedding.")
+    payload = seed_point.payload or {}
+    provider = payload.get("embedding_provider", EMBEDDING_PROVIDER)
+    model = payload.get("embedding_model", active_embedding_model())
+    print(f"Seed point inserted with {provider}:{model} embedding.")
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Initialize the Qdrant project memory collection.")
+    parser = argparse.ArgumentParser(
+        description="Initialize the Qdrant project memory collection."
+    )
     parser.add_argument(
         "--reset",
         action="store_true",

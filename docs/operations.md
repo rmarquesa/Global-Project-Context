@@ -59,14 +59,15 @@ gpc install-clients --validate-only
 For a full smoke pass:
 
 ```bash
-./venv/bin/python -m tests.smoke.embedding_smoke_test
-./venv/bin/python -m tests.smoke.search_test
-./venv/bin/python -m tests.smoke.registry_smoke_test
-./venv/bin/python -m tests.smoke.graph_projection_smoke_test
-./venv/bin/python -m tests.smoke.mcp_smoke_test
+./scripts/run_smoke_tests.sh
 ```
 
-Each test exits non-zero on failure and prints which service was unreachable.
+The wrapper runs the live-service smoke modules in sequence. To use a different
+interpreter, set `PYTHON_BIN=/path/to/python`. Keep the wrapper as the source of
+truth for the smoke sequence.
+
+The wrapper exits non-zero on failure; the underlying smoke module output points
+to the service or invariant that failed.
 
 ## Index a Project
 
