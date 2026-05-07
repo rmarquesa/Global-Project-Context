@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-from datetime import datetime
 import json
 import os
 from pathlib import Path
@@ -33,8 +32,6 @@ from gpc.registry import (
     list_repos,
     normalize_slug,
     register_repo,
-    resolve_project,
-    resolve_repo,
 )
 from gpc.search import search_project_context
 from gpc.status import get_index_status
@@ -96,7 +93,14 @@ def build_parser() -> argparse.ArgumentParser:
     status_parser.add_argument("--project", help="Project slug or alias.")
     status_parser.add_argument("--cwd", default=str(Path.cwd()), help="Project resolution cwd.")
     status_parser.add_argument("--runs", type=int, default=3, help="Recent runs to print.")
+    status_parser.add_argument("--staleness", action="store_true", help="Also report Git/index staleness.")
     status_parser.set_defaults(func=cmd_status)
+
+    stale_parser = subparsers.add_parser("stale", help="Detect whether project context is stale against Git state.")
+    stale_parser.add_argument("--project", help="Project slug or alias.")
+    stale_parser.add_argument("--cwd", default=str(Path.cwd()), help="Project resolution cwd.")
+    stale_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
+    stale_parser.set_defaults(func=cmd_stale)
 
     search_parser = subparsers.add_parser("search", help="Search indexed context.")
     search_parser.add_argument("query", help="Semantic search query.")
@@ -105,6 +109,17 @@ def build_parser() -> argparse.ArgumentParser:
     search_parser.add_argument("--limit", type=int, default=5, help="Number of results.")
     search_parser.add_argument("--content-chars", type=int, default=700, help="Characters per result.")
     search_parser.set_defaults(func=cmd_search)
+
+    context_pack_parser = subparsers.add_parser("context-pack", help="Write a cited markdown context pack for a query.")
+    context_pack_parser.add_argument("query", help="Query to retrieve context for.")
+    context_pack_parser.add_argument("--project", help="Project slug or alias.")
+    context_pack_parser.add_argument("--cwd", default=str(Path.cwd()), help="Project resolution cwd.")
+    context_pack_parser.add_argument("--repo", action="append", help="Optional repo filter; repeat for multiple repos.")
+    context_pack_parser.add_argument("--max-chunks", type=int, default=8)
+    context_pack_parser.add_argument("--max-chars", type=int, default=12000)
+    context_pack_parser.add_argument("--include-graph", action="store_true", help="Append graph neighbour notes when available.")
+    context_pack_parser.add_argument("--output", required=True, help="Markdown output path.")
+    context_pack_parser.set_defaults(func=cmd_context_pack)
 
     token_parser = subparsers.add_parser("token-savings", help="Estimate token savings.")
     token_parser.add_argument("query", help="Question or task to retrieve context for.")
@@ -115,8 +130,30 @@ def build_parser() -> argparse.ArgumentParser:
     token_parser.add_argument("--json", action="store_true")
     token_parser.set_defaults(func=cmd_token_savings)
 
+    eval_search_parser = subparsers.add_parser("eval-search", help="Evaluate semantic search quality against a fixture.")
+    eval_search_parser.add_argument("--project", required=True, help="Project slug or alias.")
+    eval_search_parser.add_argument("--fixture", required=True, help="YAML fixture with queries and expected paths.")
+    eval_search_parser.add_argument("--k", type=int, default=5, help="Top-k search results to evaluate.")
+    eval_search_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
+    eval_search_parser.set_defaults(func=cmd_eval_search)
+
     doctor_parser = subparsers.add_parser("doctor", help="Check local GPC dependencies.")
     doctor_parser.set_defaults(func=cmd_doctor)
+
+    verify_parser = subparsers.add_parser("verify", help="Verify project context health across local GPC services.")
+    verify_parser.add_argument("--project", help="Project slug or alias.")
+    verify_parser.add_argument("--cwd", default=str(Path.cwd()), help="Project resolution cwd.")
+    verify_parser.add_argument("--quick", action="store_true", help="Skip live service checks.")
+    verify_parser.add_argument("--live", action="store_true", help="Run live service checks explicitly.")
+    verify_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
+    verify_parser.set_defaults(func=cmd_verify)
+
+    health_parser = subparsers.add_parser("health-report", help="Produce an executive project health report.")
+    health_parser.add_argument("--project", required=True, help="Project slug or alias.")
+    health_parser.add_argument("--cwd", default=str(Path.cwd()), help="Project resolution cwd.")
+    health_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
+    health_parser.add_argument("--markdown", action="store_true", help="Emit markdown output.")
+    health_parser.set_defaults(func=cmd_health_report)
 
     shims_parser = subparsers.add_parser("install-shims", help="Install global shell commands.")
     shims_parser.add_argument(
@@ -327,6 +364,12 @@ def build_parser() -> argparse.ArgumentParser:
     metrics_signals.add_argument("--json", action="store_true")
     metrics_signals.set_defaults(func=cmd_metrics_signals)
 
+    mcp_usage_parser = subparsers.add_parser("mcp-usage", help="Summarize MCP tool-call usage without raw payloads.")
+    mcp_usage_parser.add_argument("--project", help="Project slug filter.")
+    mcp_usage_parser.add_argument("--since", default="24h", help="Window such as 24h or 7d.")
+    mcp_usage_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
+    mcp_usage_parser.set_defaults(func=cmd_mcp_usage)
+
     maintenance_parser = subparsers.add_parser(
         "maintenance",
         help="Operational maintenance tasks for local GPC data.",
@@ -342,6 +385,15 @@ def build_parser() -> argparse.ArgumentParser:
     retention_parser.add_argument("--dry-run", action="store_true")
     retention_parser.add_argument("--json", action="store_true")
     retention_parser.set_defaults(func=cmd_maintenance_retention)
+
+    maintenance_doctor = maintenance_subs.add_parser(
+        "doctor",
+        help="Dry-run diagnostics for inconsistent read-model/index data.",
+    )
+    maintenance_doctor.add_argument("--project", required=True)
+    maintenance_doctor.add_argument("--cwd", default=str(Path.cwd()))
+    maintenance_doctor.add_argument("--json", action="store_true")
+    maintenance_doctor.set_defaults(func=cmd_maintenance_doctor)
 
     bridge_parser = subparsers.add_parser(
         "graph-bridge",
@@ -379,6 +431,21 @@ def build_parser() -> argparse.ArgumentParser:
         help="Emit machine-readable JSON instead of human output.",
     )
     bridge_parser.set_defaults(func=cmd_graph_bridge)
+
+    graph_sync_parser = subparsers.add_parser(
+        "graph-sync",
+        help="Project local graphify-out/graph.json into the Neo4j Graphify read model.",
+    )
+    graph_sync_parser.add_argument("path", nargs="?", default=".", help="Repository root path.")
+    graph_sync_parser.add_argument("--project", required=True, help="GPC project slug.")
+    graph_sync_parser.add_argument("--repo", required=True, help="Repository slug within the project.")
+    graph_sync_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
+    graph_sync_parser.add_argument(
+        "--no-clear",
+        action="store_true",
+        help="Do not clear the existing Graphify subgraph for this project/repo before writing.",
+    )
+    graph_sync_parser.set_defaults(func=cmd_graph_sync)
 
     return parser
 
@@ -568,7 +635,29 @@ def cmd_status(args: argparse.Namespace) -> int:
             f"chunks_written={run['chunks_written']} "
             f"started_at={run['started_at']}"
         )
+    if args.staleness:
+        report = _detect_staleness(args.project, args.cwd)
+        print(f"stale={str(report.is_stale).lower()} summary={report.summary}")
+        for action in report.to_dict()["remediation"]:
+            print(f"remediation={action}")
     return 0
+
+
+def cmd_stale(args: argparse.Namespace) -> int:
+    report = _detect_staleness(args.project, args.cwd)
+    if args.json:
+        print(json.dumps(report.to_dict(), indent=2))
+    else:
+        print(f"project={report.project_slug} stale={str(report.is_stale).lower()} summary={report.summary}")
+        for action in report.to_dict()["remediation"]:
+            print(f"remediation={action}")
+    return 0
+
+
+def _detect_staleness(project: str | None, cwd: str | None):
+    from gpc.staleness import detect_project_staleness
+
+    return detect_project_staleness(project=project, cwd=cwd)
 
 
 def cmd_search(args: argparse.Namespace) -> int:
@@ -588,6 +677,26 @@ def cmd_search(args: argparse.Namespace) -> int:
             f"path={result.relative_path} chunk={result.chunk_id}"
         )
         print(content)
+    return 0
+
+
+def cmd_context_pack(args: argparse.Namespace) -> int:
+    from gpc.context_pack import build_context_pack, write_context_pack
+
+    pack = build_context_pack(
+        args.query,
+        project=args.project,
+        cwd=args.cwd,
+        repo=args.repo,
+        max_chunks=args.max_chunks,
+        max_chars=args.max_chars,
+        include_graph=args.include_graph,
+    )
+    path = write_context_pack(pack, args.output)
+    print(
+        f"context_pack={path} chunks={pack.included_chunks} "
+        f"truncated={str(pack.truncated).lower()} chars={len(pack.markdown)}"
+    )
     return 0
 
 
@@ -618,6 +727,25 @@ def cmd_token_savings(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_eval_search(args: argparse.Namespace) -> int:
+    from gpc.search_eval import run_search_eval
+
+    report = run_search_eval(args.project, args.fixture, k=args.k)
+    if args.json:
+        print(json.dumps(report.to_dict(), indent=2))
+    else:
+        summary = report.summary
+        print(
+            f"project={args.project} queries={summary['queries']} "
+            f"hits={summary['hits']}/{summary['expected_paths']} "
+            f"recall_at_{args.k}={summary['recall_at_k']:.3f}"
+        )
+        for result in report.results:
+            status = "hit" if result.hit_paths else "miss"
+            print(f"{status} query={result.query!r} hits={result.hit_paths} missing={result.missing_expected_paths}")
+    return 0
+
+
 def cmd_doctor(_: argparse.Namespace) -> int:
     checks = [
         check_path("root", ROOT_DIR),
@@ -631,6 +759,42 @@ def cmd_doctor(_: argparse.Namespace) -> int:
     for name, ok, detail in checks:
         print(f"{'ok' if ok else 'fail'} {name}: {detail}")
     return 0 if all(ok for _, ok, _ in checks) else 1
+
+
+def cmd_verify(args: argparse.Namespace) -> int:
+    from gpc.verify import verify_project
+
+    report = verify_project(project=args.project, cwd=args.cwd, quick=args.quick, live=args.live)
+    if args.json:
+        print(json.dumps(report.to_dict(), indent=2))
+    else:
+        print(f"project={report.project_slug} status={report.overall_status} summary={report.summary}")
+        for check in report.checks:
+            print(f"{check.status} {check.name}: {check.message}")
+            if check.remediation:
+                print(f"  remediation: {check.remediation}")
+    return 1 if report.overall_status == "fail" else 0
+
+
+def cmd_health_report(args: argparse.Namespace) -> int:
+    from gpc.health_report import build_live_health_report, render_health_markdown
+
+    report = build_live_health_report(args.project, cwd=args.cwd)
+    if args.json:
+        print(json.dumps(report.to_dict(), indent=2))
+    elif args.markdown:
+        print(render_health_markdown(report), end="")
+    else:
+        index = report.sections["index"]
+        graph = report.sections["graph"]
+        print(
+            f"project={report.project_slug} status={report.overall_status} "
+            f"files={index['files']} chunks={index['chunks']} "
+            f"graph_found={str(graph.get('found')).lower()} graph_nodes={graph.get('node_count', 0)}"
+        )
+        for action in report.recommended_actions:
+            print(f"action={action}")
+    return 1 if report.overall_status == "fail" else 0
 
 
 def cmd_install_shims(args: argparse.Namespace) -> int:
@@ -1103,6 +1267,47 @@ def cmd_metrics_signals(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_mcp_usage(args: argparse.Namespace) -> int:
+    from gpc.mcp_observability import summarize_mcp_usage
+
+    window_hours = _parse_hours(args.since)
+    summary = summarize_mcp_usage(project=args.project, window_hours=window_hours)
+    if args.json:
+        print(json.dumps(summary, indent=2))
+    else:
+        print(f"calls={summary['total_calls']} window_hours={summary['window_hours']} project={summary.get('project')}")
+        for row in summary.get("by_tool", []):
+            print(f"tool={row['tool']} calls={row['calls']} avg_latency_ms={row['avg_latency_ms']}")
+    return 0
+
+
+def _parse_hours(value: str) -> int:
+    value = value.strip().lower()
+    if value.endswith("h"):
+        return max(1, int(value[:-1]))
+    if value.endswith("d"):
+        return max(1, int(value[:-1]) * 24)
+    return max(1, int(value))
+
+
+def cmd_maintenance_doctor(args: argparse.Namespace) -> int:
+    from gpc.maintenance import diagnose_project_maintenance
+
+    report = diagnose_project_maintenance(args.project, cwd=args.cwd)
+    if args.json:
+        print(json.dumps(report.to_dict(), indent=2))
+    else:
+        print(
+            f"project={report.project_slug} dry_run=true "
+            f"requires_attention={str(report.requires_attention).lower()} summary={report.summary}"
+        )
+        for finding in report.findings:
+            print(f"{finding.severity} {finding.name} count={finding.count}: {finding.message}")
+            if finding.remediation:
+                print(f"  remediation={finding.remediation}")
+    return 1 if any(f.severity == "fail" for f in report.findings) else 0
+
+
 def cmd_maintenance_retention(args: argparse.Namespace) -> int:
     from gpc.retention import apply_retention
 
@@ -1164,6 +1369,33 @@ def cmd_graph_bridge(args: argparse.Namespace) -> int:
             f"edges_written={stats.edges_written} "
             f"edges_deleted={stats.edges_deleted} "
             f"rules={','.join(stats.rules_applied)}"
+        )
+    return 0
+
+
+def cmd_graph_sync(args: argparse.Namespace) -> int:
+    from dataclasses import asdict
+
+    from gpc.graphify_sync import sync_graphify_to_neo4j
+
+    try:
+        stats = sync_graphify_to_neo4j(
+            Path(args.path),
+            project_slug=args.project,
+            repo_slug=args.repo,
+            clear_repo=not args.no_clear,
+        )
+    except Exception as exc:
+        print(f"graph-sync failed: {exc}", file=sys.stderr)
+        return 1
+
+    if args.json:
+        print(json.dumps(asdict(stats), indent=2))
+    else:
+        print(
+            f"project={stats.project_slug} repo={stats.repo_slug} "
+            f"repos_written={stats.repos_written} nodes_written={stats.nodes_written} "
+            f"relations_written={stats.relations_written}"
         )
     return 0
 

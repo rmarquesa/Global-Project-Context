@@ -39,6 +39,14 @@ OpenClaw, Gemini, and Copilot can start it as an MCP stdio server.
 For humans, the public commands are:
 
 - `gpc`: main CLI.
+  - `gpc doctor`: dependency-level checks for the local workstation.
+  - `gpc verify --project <slug>`: project context health across Postgres, Qdrant, Ollama, Neo4j, Graphify, staleness, and index state.
+  - `gpc stale --project <slug>`: compare Git-visible files, indexed files, mtimes, and Graphify report freshness.
+  - `gpc eval-search --project <slug> --fixture <file>`: run repeatable search-quality checks.
+  - `gpc context-pack <query> --project <slug> --output pack.md`: write a cited Markdown context bundle for an AI handoff.
+  - `gpc health-report --project <slug>`: summarize project health for operators.
+  - `gpc mcp-usage --project <slug>`: audit MCP tool usage with redacted payload metadata.
+  - `gpc maintenance doctor --project <slug>`: dry-run maintenance diagnostics only; no destructive cleanup.
 - `gpc-index`: index the current or given project.
 - `gpc-status`: inspect indexed state.
 - `gpc-search`: search project context.

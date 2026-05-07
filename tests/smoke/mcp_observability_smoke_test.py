@@ -31,22 +31,21 @@ def main() -> None:
     after = _count_calls()
     assert after - before >= 2, f"Expected 2+ new rows, got {after - before}"
 
-    # mcp_usage itself is a tool → it also logs a row, so aggregate >= 3.
+    # mcp_usage is logged after it returns, so its own row is not necessarily
+    # visible in the aggregate returned by this call.
     usage = mcp_usage(window_hours=1)
     assert usage["ok"], usage
     tools_logged = {row["tool"] for row in usage["by_tool"]}
     assert "gpc.list_projects" in tools_logged, usage
-    assert usage["totals"]["total"] >= 3, usage
+    assert usage["totals"]["total"] >= 2, usage
 
     # Clean up the rows we just inserted so repeat runs stay idempotent.
     with psycopg.connect(POSTGRES_DSN) as conn:
-        conn.execute(
-            """
+        conn.execute("""
             delete from gpc_mcp_calls
             where tool in ('gpc.list_projects', 'gpc.mcp_usage')
               and called_at > now() - interval '5 minutes'
-            """
-        )
+            """)
 
     print("mcp_observability_smoke_test=passed")
 

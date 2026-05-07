@@ -1401,6 +1401,7 @@ p code, .hero__liveTag code, .pipelineStage p code, .graphifyCopy p code {
 }
 
 @media (max-width: 900px) {
+  .opsGrid { grid-template-columns: 1fr; }
   :root { --header-height: 68px; }
 
   .topbar { padding: 0 20px; }
@@ -1472,4 +1473,47 @@ p code, .hero__liveTag code, .pipelineStage p code, .graphifyCopy p code {
 
   .demoRow { grid-template-columns: 1fr; gap: 4px; }
   .demoRow__conf { justify-self: start; }
+}
+
+/* ---------- Operator workflow ---------- */
+
+.opsGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.opsGrid article {
+  min-height: 220px;
+  padding: 24px;
+  background: var(--warm);
+  border: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.opsGrid span {
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 850;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.opsGrid h3 {
+  margin: 20px 0 12px;
+  font-size: clamp(22px, 2.5vw, 32px);
+  line-height: 1.04;
+  letter-spacing: -0.02em;
+}
+
+.opsGrid p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.opsGrid code {
+  color: var(--dark);
+  font-size: 0.82em;
 }

@@ -14,6 +14,7 @@ Design:
 from __future__ import annotations
 
 from functools import wraps
+from collections import Counter, defaultdict
 import os
 import sys
 import time
@@ -23,7 +24,6 @@ import psycopg
 from psycopg.types.json import Jsonb
 
 from gpc.config import POSTGRES_DSN
-
 
 ARG_WHITELIST = {
     "project",
@@ -47,7 +47,112 @@ ARG_WHITELIST = {
 }
 
 ARG_MAX_CHARS = 400
+SENSITIVE_KEY_PARTS = (
+    "password",
+    "passwd",
+    "secret",
+    "api_key",
+    "apikey",
+    "access_token",
+    "refresh_token",
+    "auth_token",
+)
 TOKEN_SAVINGS_TOOLS = {"gpc.search", "gpc.context", "gpc.estimate_token_savings"}
+
+
+def redact_sensitive(value: Any) -> Any:
+    if isinstance(value, dict):
+        redacted: dict[str, Any] = {}
+        for key, item in value.items():
+            key_lower = str(key).lower().replace("-", "_")
+            if any(part in key_lower for part in SENSITIVE_KEY_PARTS):
+                redacted[key] = "[REDACTED]"
+            else:
+                redacted[key] = redact_sensitive(item)
+        return redacted
+    if isinstance(value, list):
+        return [redact_sensitive(item) for item in value]
+    return value
+
+
+def summarize_mcp_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    total = len(rows)
+    clients = Counter((row.get("client_name") or "unknown") for row in rows)
+    tools = Counter((row.get("tool") or "unknown") for row in rows)
+    projects = Counter((row.get("project_slug") or "unknown") for row in rows)
+    errors = Counter(
+        (row.get("tool") or "unknown") for row in rows if row.get("success") is False
+    )
+    durations: dict[str, list[int]] = defaultdict(list)
+    for row in rows:
+        tool = row.get("tool") or "unknown"
+        if isinstance(row.get("duration_ms"), int):
+            durations[tool].append(row["duration_ms"])
+    return {
+        "total_calls": total,
+        "by_client": [
+            {"client": key, "calls": value} for key, value in clients.most_common()
+        ],
+        "by_tool": [
+            {
+                "tool": key,
+                "calls": value,
+                "avg_latency_ms": _avg(durations.get(key, [])),
+            }
+            for key, value in tools.most_common()
+        ],
+        "errors_by_tool": [
+            {"tool": key, "errors": value} for key, value in errors.most_common()
+        ],
+        "top_projects": [
+            {"project": key, "calls": value} for key, value in projects.most_common()
+        ],
+    }
+
+
+def summarize_mcp_usage(
+    *,
+    project: str | None = None,
+    window_hours: int = 24,
+    limit: int = 500,
+) -> dict[str, Any]:
+    where = ["called_at >= now() - (%s || ' hours')::interval"]
+    params: list[Any] = [window_hours]
+    if project:
+        where.append("project_slug = %s")
+        params.append(project)
+    with psycopg.connect(POSTGRES_DSN) as conn:
+        rows = conn.execute(
+            f"""
+            select tool, project_slug, client_name, duration_ms, success, error_type, args, result_meta
+            from gpc_mcp_calls
+            where {' and '.join(where)}
+            order by called_at desc
+            limit %s
+            """,
+            (*params, limit),
+        ).fetchall()
+    normalized = [
+        {
+            "tool": row[0],
+            "project_slug": row[1],
+            "client_name": row[2],
+            "duration_ms": row[3],
+            "success": row[4],
+            "error_type": row[5],
+            "args": redact_sensitive(row[6] or {}),
+            "result_meta": redact_sensitive(row[7] or {}),
+        }
+        for row in rows
+    ]
+    summary = summarize_mcp_rows(normalized)
+    summary["window_hours"] = window_hours
+    summary["project"] = project
+    return summary
+
+
+def _avg(values: list[int]) -> float | None:
+    return round(sum(values) / len(values), 2) if values else None
 
 
 def _client_name() -> str | None:
@@ -86,9 +191,11 @@ def _shrink_arg(value: Any) -> Any:
     if isinstance(value, (int, float, bool)) or value is None:
         return value
     if isinstance(value, (list, tuple)):
-        return [_shrink_arg(v) for v in value][:20]
+        return redact_sensitive([_shrink_arg(v) for v in value][:20])
     if isinstance(value, dict):
-        return {k: _shrink_arg(v) for k, v in list(value.items())[:20]}
+        return redact_sensitive(
+            {k: _shrink_arg(v) for k, v in list(value.items())[:20]}
+        )
     return str(value)[:ARG_MAX_CHARS]
 
 
@@ -153,7 +260,11 @@ def _write_log(
 ) -> dict[str, Any] | None:
     try:
         with psycopg.connect(POSTGRES_DSN) as conn:
-            resolved = result_meta.get("resolved_project") if isinstance(result_meta, dict) else None
+            resolved = (
+                result_meta.get("resolved_project")
+                if isinstance(result_meta, dict)
+                else None
+            )
             project_id = None
             if resolved:
                 row = conn.execute(
@@ -229,7 +340,10 @@ def _project_from_result(result: Any) -> dict[str, Any] | None:
         return project
     estimate = result.get("estimate")
     if isinstance(estimate, dict) and estimate.get("project_slug"):
-        return {"slug": estimate.get("project_slug"), "name": estimate.get("project_name")}
+        return {
+            "slug": estimate.get("project_slug"),
+            "name": estimate.get("project_name"),
+        }
     return None
 
 
@@ -276,7 +390,11 @@ def _write_token_savings_sample(
     result: Any,
     log_info: dict[str, Any] | None,
 ) -> None:
-    if tool not in TOKEN_SAVINGS_TOOLS or not isinstance(result, dict) or result.get("ok") is not True:
+    if (
+        tool not in TOKEN_SAVINGS_TOOLS
+        or not isinstance(result, dict)
+        or result.get("ok") is not True
+    ):
         return
 
     try:
@@ -289,15 +407,22 @@ def _write_token_savings_sample(
         if not isinstance(project_slug, str) or not project_slug:
             return
 
-        project_id = (log_info or {}).get("project_id") or _resolve_project_id(project_slug)
+        project_id = (log_info or {}).get("project_id") or _resolve_project_id(
+            project_slug
+        )
         if not project_id:
             return
 
-        estimate = result.get("estimate") if isinstance(result.get("estimate"), dict) else None
+        estimate = (
+            result.get("estimate") if isinstance(result.get("estimate"), dict) else None
+        )
         if estimate:
             indexed_tokens = int(estimate.get("indexed_tokens") or 0)
             retrieved_tokens = int(estimate.get("retrieved_tokens") or 0)
-            saved_tokens = int(estimate.get("saved_tokens") or max(indexed_tokens - retrieved_tokens, 0))
+            saved_tokens = int(
+                estimate.get("saved_tokens")
+                or max(indexed_tokens - retrieved_tokens, 0)
+            )
             savings_percent = float(estimate.get("savings_percent") or 0)
             returned_chars = 0
             result_count = None
@@ -309,7 +434,9 @@ def _write_token_savings_sample(
             indexed_tokens = int(stats.get("indexed_tokens") or 0)
             retrieved_tokens = count_tokens(text)
             saved_tokens = max(indexed_tokens - retrieved_tokens, 0)
-            savings_percent = round((saved_tokens / indexed_tokens) * 100, 2) if indexed_tokens else 0
+            savings_percent = (
+                round((saved_tokens / indexed_tokens) * 100, 2) if indexed_tokens else 0
+            )
             returned_chars = len(text)
             if isinstance(result.get("results"), list):
                 result_count = len(result["results"])
@@ -319,7 +446,11 @@ def _write_token_savings_sample(
                 result_count = None
 
         metadata = {
-            "repo_filter": result.get("repo_filter") if isinstance(result, dict) else args.get("repo"),
+            "repo_filter": (
+                result.get("repo_filter")
+                if isinstance(result, dict)
+                else args.get("repo")
+            ),
             "estimate_project_name": estimate.get("project_name") if estimate else None,
         }
         with psycopg.connect(POSTGRES_DSN) as conn:
@@ -407,7 +538,9 @@ def log_mcp_call(tool_name: str) -> Callable:
                 log_info = _write_log(
                     tool=tool_name,
                     args=filtered_args,
-                    result_meta=_extract_result_meta(result) if isinstance(result, dict) else {},
+                    result_meta=(
+                        _extract_result_meta(result) if isinstance(result, dict) else {}
+                    ),
                     duration_ms=duration_ms,
                     success=success,
                     error_type=error_type,

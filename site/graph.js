@@ -1,6 +1,6 @@
 // Interactive graph viewer for Global Project Context.
 // Zero dependencies — hand-rolled verlet force simulation on a 2D canvas.
-// Data: site/data/graph.json — 627 real nodes, 1250 edges from this repo.
+// Data: site/data/graph.json — 801 real nodes, 1583 edges from this repo.
 
 const COMMUNITY_PALETTE = [
   "#1f8a70", // 0 — primary accent (green)
@@ -462,7 +462,7 @@ async function bootHeroGraph() {
   const canvas = document.getElementById("heroGraph");
   if (!canvas) return null;
   try {
-    const data = await loadGraph("./data/graph.json");
+    const data = await loadGraph("./data/graph.json?v=20260507");
     // Subset for hero: only nodes with degree >= 4 (keeps it uncluttered)
     const ids = new Set(data.nodes.filter((n) => (n.degree || 0) >= 4).map((n) => n.id));
     const subset = {
@@ -487,7 +487,7 @@ async function bootExplorer() {
 
   let graph;
   try {
-    const data = await loadGraph("./data/graph.json");
+    const data = await loadGraph("./data/graph.json?v=20260507");
     graph = new Graph(canvas, data, {
       mode: "explorer",
       onSelect: (n) => renderInfo(n),

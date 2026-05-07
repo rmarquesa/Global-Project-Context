@@ -25,7 +25,19 @@ Each Graphify run produces three artifacts under `graphify-out/`:
 | `graph.html` | Interactive graph visualization. |
 | `GRAPH_REPORT.md` | Human-readable audit (god nodes, communities, suggestions). |
 
-GPC consumes `graph.json` and projects it into Neo4j.
+GPC consumes `graph.json` and projects it into Neo4j. To manually sync an
+already-generated local graph into the Graphify read model, run:
+
+```bash
+gpc graph-sync /path/to/repo --project commerce --repo commerce-api
+gpc graph-bridge --project commerce
+```
+
+`graph-sync` clears and rewrites only the selected `project + repo` Graphify
+subgraph by default. Because that removes nodes for the selected repo, any
+`CROSS_REPO_BRIDGE` edges touching those nodes are removed as well; run
+`gpc graph-bridge --project <slug>` after a manual sync. Use `--no-clear` only
+for diagnostic runs where preserving stale nodes/relations is intentional.
 
 ## Consolidation Model
 

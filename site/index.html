@@ -30,7 +30,7 @@
     <meta property="og:image" content="https://rmarquesa.github.io/Global-Project-Context/og-image.png" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
-    <meta property="og:image:alt" content="Global Project Context — force graph of 627 nodes and 1250 edges representing this repository, connected to Codex, Claude, Copilot and Gemini through an MCP endpoint." />
+    <meta property="og:image:alt" content="Global Project Context — force graph of 801 nodes and 1583 edges representing this repository, connected to Codex, Claude, Copilot and Gemini through an MCP endpoint." />
     <meta property="og:locale" content="en_US" />
 
     <!-- Twitter / X -->
@@ -106,6 +106,7 @@
         <a href="#pipeline">Pipeline</a>
         <a href="#explorer">Explore the graph</a>
         <a href="#demo">Live MCP demo</a>
+        <a href="#operations">Operations</a>
         <a href="#observability">Observability</a>
         <a href="#multi">Multi-repo</a>
         <a href="#faq">FAQ</a>
@@ -128,8 +129,8 @@
           <p class="hero__plain">
             Chunks land in Postgres, vectors in Qdrant, embeddings from Ollama,
             and a consolidated Graphify knowledge graph in Neo4j. The canvas
-            behind this text is the real graph of this repository — 627 nodes,
-            1250 edges, 49 communities — not decoration.
+            behind this text is the real graph of this repository — 801 nodes,
+            1583 edges, 52 communities — not decoration.
           </p>
           <div class="hero__actions" aria-label="Primary actions">
             <a class="button" href="#demo">See a live query</a>
@@ -160,6 +161,51 @@
             <li><strong>Survives sessions and branches</strong><span>Git hooks reindex after every commit, merge and checkout, so retrieval reflects the current code.</span></li>
             <li><strong>Stays on your machine</strong><span>Embeddings run locally with Ollama. Project text never leaves the box.</span></li>
           </ul>
+        </div>
+      </section>
+
+
+      <section id="operations" class="section opsSection" aria-labelledby="operations-title">
+        <div class="section__intro">
+          <p class="kicker">Operator workflow</p>
+          <h2 id="operations-title">Verify, evaluate, package and audit context before trusting it.</h2>
+          <p class="section__lead">
+            GPC now includes a small operator surface around the read-only MCP server.
+            These commands keep writes in CLI/indexer paths while giving humans and
+            agents a fast way to prove the local context is fresh and useful.
+          </p>
+        </div>
+        <div class="opsGrid">
+          <article>
+            <span>Health</span>
+            <h3><code>gpc verify</code> + <code>health-report</code></h3>
+            <p>Check registry resolution, index state, services, Graphify visibility, staleness and drift in one operator report.</p>
+          </article>
+          <article>
+            <span>Freshness</span>
+            <h3><code>gpc stale</code></h3>
+            <p>Compare Git-visible relevant files against Postgres and Graphify so agents do not reason from stale context.</p>
+          </article>
+          <article>
+            <span>Quality</span>
+            <h3><code>gpc eval-search</code></h3>
+            <p>Run fixture-based recall checks before changing chunking, embeddings, repo filters or retrieval behavior.</p>
+          </article>
+          <article>
+            <span>Handoff</span>
+            <h3><code>gpc context-pack</code></h3>
+            <p>Export a cited Markdown bundle with retrieved chunks, validation commands and token estimates for AI or human review.</p>
+          </article>
+          <article>
+            <span>Audit</span>
+            <h3><code>gpc mcp-usage</code></h3>
+            <p>Summarize MCP activity from Postgres with recursive redaction of secret-like fields.</p>
+          </article>
+          <article>
+            <span>Safety</span>
+            <h3><code>maintenance doctor</code></h3>
+            <p>Dry-run read-model diagnostics only. No reset, delete, table truncation or graph mutation.</p>
+          </article>
         </div>
       </section>
 
@@ -274,7 +320,8 @@
           <p class="section__lead">
             Every MCP call is logged to Postgres. Search, context and token
             savings calls also emit compact token-economy samples that Grafana
-            turns into an operational dashboard.
+            turns into an operational dashboard. The CLI also exposes redacted
+            usage summaries with <code>gpc mcp-usage</code>.
           </p>
         </div>
 
@@ -595,8 +642,8 @@
       </div>
     </footer>
 
-    <script src="./graph.js" defer></script>
-    <script src="./mcp-demo.js" defer></script>
-    <script src="./pipeline.js" defer></script>
+    <script src="./graph.js?v=20260507" defer></script>
+    <script src="./mcp-demo.js?v=20260507" defer></script>
+    <script src="./pipeline.js?v=20260507" defer></script>
   </body>
 </html>

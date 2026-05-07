@@ -10,7 +10,7 @@ Installed by `./install.sh` into `~/.local/bin` (override with `--bin-dir`):
 
 | Command | Purpose |
 |---|---|
-| `gpc` | Main CLI: project init, doctor, migrate, install-clients, token-savings. |
+| `gpc` | Main CLI: project init, doctor, verify, migrate, install-clients, token-savings, graph sync/bridge. |
 | `gpc-index` | Index a project root manually. |
 | `gpc-status` | Inspect indexed files, chunks, Qdrant points and recent runs. |
 | `gpc-search` | Run a semantic search over an indexed project. |
@@ -20,13 +20,24 @@ Common invocations:
 
 ```bash
 gpc doctor
+gpc verify --project project-slug
+gpc verify --project project-slug --quick --json
 gpc init . --slug project-slug --name "Project Name"
 gpc init /path/to/repo --project project-slug --repo repo-slug --name "Repo Name"
 gpc-index /path/to/project --slug project-slug
 gpc-index /path/to/repo --project project-slug --repo repo-slug
 gpc-status --project project-slug
+gpc-status --project project-slug --staleness
+gpc stale --project project-slug --json
 gpc-search "query" --project project-slug
 gpc token-savings "query" --project project-slug
+gpc eval-search --project project-slug --fixture tests/fixtures/search_eval_gpc.yml --k 5
+gpc context-pack "MCP architecture" --project project-slug --output /tmp/gpc-context.md
+gpc health-report --project project-slug --json
+gpc mcp-usage --project project-slug --since 24h --json
+gpc maintenance doctor --project project-slug --json
+gpc graph-sync /path/to/repo --project project-slug --repo repo-slug
+gpc graph-bridge --project project-slug
 gpc install-clients
 gpc-mcp-http --host 127.0.0.1 --port 8765
 ```
@@ -43,8 +54,15 @@ The reusable implementation lives under `gpc/`.
 | `gpc/registry.py` | Project / source registry and resolver. |
 | `gpc/indexer.py` | File discovery, chunking, embeddings, Postgres and Qdrant writes. |
 | `gpc/search.py` | Semantic search over Qdrant with Postgres hydration. |
+| `gpc/search_eval.py` | Search-quality fixture runner and recall metrics. |
+| `gpc/context_pack.py` | Cited Markdown context-pack rendering and CLI output helpers. |
+| `gpc/health_report.py` | Operator health rollup over verify, index, graph, drift and MCP usage signals. |
+| `gpc/maintenance.py` | Dry-run maintenance diagnostics for read-model consistency. |
 | `gpc/status.py` | Shared index status helper used by CLI and MCP. |
+| `gpc/staleness.py` | Git/index/Graphify freshness detector used by `gpc stale` and `gpc verify`. |
+| `gpc/verify.py` | Project health verification across registry, index, services, and graph state. |
 | `gpc/graph.py` | Postgres → Neo4j projection helpers. |
+| `gpc/graphify_sync.py` | `graphify-out/graph.json` → Neo4j Graphify projection sync. |
 | `gpc/token_economy.py` | Token-savings estimator. |
 | `gpc/mcp_server.py` | Read-only MCP tool server. |
 
@@ -102,7 +120,10 @@ and Ollama to be running.
 ```
 
 The wrapper is the source of truth for smoke-test order; it refreshes the Qdrant
-bootstrap seed before search assertions and then runs the live-service checks.
+bootstrap seed before search assertions, validates graph projection/querying,
+then verifies the local `graphify-out/graph.json` for this repo is visible
+through the Neo4j-backed graph summary surface before running the remaining
+live-service checks.
 
 See [CONTRIBUTING.md](../CONTRIBUTING.md#testing) for guidance on when to add
 new smoke coverage.

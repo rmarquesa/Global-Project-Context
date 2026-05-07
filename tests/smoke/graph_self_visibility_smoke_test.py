@@ -1,0 +1,59 @@
+"""Smoke test: the GPC project must be visible to its own graph MCP tools.
+
+Reproduces the "graph self-visibility" failure where ``graph_summary`` returns
+``found=False`` for the ``gpc`` project even though Graphify already produced a
+graph locally. This test asserts:
+
+* a Graphify graph artifact (``graphify-out/graph.json``) exists in the repo
+  root — without it there is nothing to project, so we surface that as a
+  blocker rather than a passing test;
+* ``graph_summary(project_slug="gpc")`` resolves with ``found=True``;
+* the result includes at least one repo and at least one god node, proving
+  the projection actually wrote ``GraphifyProject`` / ``GraphifyRepo`` /
+  ``GraphifyNode`` data into Neo4j.
+
+The test runs the projection step itself (``sync_graphify_to_neo4j``) before
+querying so it is reproducible regardless of when the post-commit hook last
+ran. The MCP tool ``gpc.graph_summary`` is a thin wrapper around the same
+``graph_summary`` function — calling the function directly is equivalent.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from gpc.config import ROOT_DIR
+from gpc.graphify_sync import sync_graphify_to_neo4j
+from gpc.graph_query import graph_summary
+
+PROJECT_SLUG = "gpc"
+REPO_SLUG = "gpc"
+
+
+def main() -> None:
+    repo_root = Path(ROOT_DIR)
+    graph_path = repo_root / "graphify-out" / "graph.json"
+    assert (
+        graph_path.is_file()
+    ), f"missing {graph_path} — run `graphify update .` in the GPC repo first"
+
+    sync_stats = sync_graphify_to_neo4j(
+        repo_root,
+        project_slug=PROJECT_SLUG,
+        repo_slug=REPO_SLUG,
+    )
+    assert sync_stats.nodes_written > 0, sync_stats
+    assert sync_stats.relations_written > 0, sync_stats
+
+    result = graph_summary(PROJECT_SLUG)
+    assert result.get("found") is True, result
+    repos = result.get("repos") or []
+    assert any(r.get("repo") == REPO_SLUG for r in repos), repos
+    assert sum(int(r.get("node_count") or 0) for r in repos) > 0, repos
+    assert (result.get("god_nodes") or []) or (result.get("utility_hubs") or []), result
+
+    print("graph_self_visibility_smoke_test=passed")
+
+
+if __name__ == "__main__":
+    main()

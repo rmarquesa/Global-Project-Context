@@ -1,0 +1,23 @@
+embedding:
+  provider: ollama
+  model: nomic-embed-text:latest
+  dimensions: 768
+queries:
+  - query: "how does MCP stay read-only?"
+    expected_paths:
+      - docs/architecture.md
+      - SECURITY.md
+      - gpc/mcp_server.py
+  - query: "how are projects and repositories registered?"
+    expected_paths:
+      - docs/architecture.md
+      - gpc/registry.py
+  - query: "how does Graphify bridge confidence work?"
+    expected_paths:
+      - docs/graphify.md
+      - gpc/cross_repo.py
+  - query: "how are self metrics and drift signals stored?"
+    expected_paths:
+      - docs/observability.md
+      - gpc/self_metrics.py
+      - gpc/drift.py

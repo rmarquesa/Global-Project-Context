@@ -16,6 +16,25 @@ mudem de direção.
 
 ---
 
+## Fase 2.1 — Product hardening e operator workflow (entregue)
+
+**Entregue em 2026-05-07.** O GPC ganhou comandos operacionais para verificar,
+avaliar, empacotar e auditar contexto sem quebrar a regra central: MCP continua
+read-only; escritas e diagnósticos ficam na CLI.
+
+- [x] `gpc graph-sync` sincroniza `graphify-out/graph.json` para Neo4j por
+      `project_slug + repo_slug`, com smoke de self-visibility.
+- [x] `gpc verify` consolida registry, índice, Graphify, staleness e serviços.
+- [x] `gpc stale` e `gpc-status --staleness` detectam divergência entre Git,
+      Postgres e Graphify.
+- [x] `gpc eval-search` executa fixture de qualidade de busca com recall@k.
+- [x] `gpc context-pack` gera Markdown citado e limitado por orçamento.
+- [x] `gpc health-report` resume sinais de operação para humanos/CI local.
+- [x] `gpc mcp-usage` expõe auditoria redigida de chamadas MCP.
+- [x] `gpc maintenance doctor` adiciona diagnóstico dry-run sem mutação.
+- [x] Testes unitários adicionais cobrem parser CLI, chunking/discovery do
+      indexer, payloads MCP, redaction, manutenção, context packs e search eval.
+
 ## Fase 1 — Grafo estrutural acessível pelo MCP (entregue)
 
 **Entregue em 2026-04-23.** O MCP agora consegue responder perguntas de

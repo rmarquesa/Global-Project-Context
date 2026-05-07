@@ -53,8 +53,14 @@ credentials `admin / gpcgrafanapass`.
 
 ```bash
 gpc doctor
+gpc verify --project project-slug
 gpc install-clients --validate-only
 ```
+
+Use `gpc doctor` for workstation dependency checks. Use `gpc verify` when a
+specific project should have usable context; it checks project resolution, index
+state, Graphify files, and live local services. Add `--quick` to skip live
+service probes and `--json` for automation.
 
 For a full smoke pass:
 
@@ -123,15 +129,85 @@ The indexer hashes file contents and skips unchanged files. Useful flags:
 
 ```bash
 gpc-status --project project-slug
+gpc-status --project project-slug --staleness
+gpc stale --project project-slug --json
 gpc-search "how does authentication work?" --project project-slug
 gpc token-savings "how does authentication work?" --project project-slug
 ```
 
 `gpc-status` reports indexed file count, chunk count, Qdrant point count and
-the last few index runs. Use it to confirm coverage before relying on
-retrieval.
+the last few index runs. Add `--staleness` or use `gpc stale` to compare Git
+state with indexed files and Graphify freshness before relying on retrieval.
+
+## Search Evaluation
+
+Use `gpc eval-search` when changing retrieval, chunking, embeddings, or repo
+filtering. Fixtures are small YAML files with expected paths per query:
+
+```bash
+gpc eval-search --project project-slug --fixture tests/fixtures/search_eval_gpc.yml --k 5
+gpc eval-search --project project-slug --fixture tests/fixtures/search_eval_gpc.yml --json
+```
+
+The report includes hit counts, recall@k, query hit rate, and the active
+embedding provider/model/dimensions. Keep the default embedding provider local
+(`ollama`, `nomic-embed-text:latest`) unless you intentionally rebuild the
+Qdrant collection with another model.
+
+## Context Packs
+
+Use `gpc context-pack` to export a bounded, cited Markdown bundle for a human
+review or AI handoff:
+
+```bash
+gpc context-pack "MCP read-only architecture" --project project-slug --output /tmp/gpc-context.md
+gpc context-pack "Graphify bridge rules" --project project-slug --include-graph --output /tmp/gpc-graph-pack.md
+```
+
+The pack includes retrieved chunks, citations, an approximate token count, and
+validation commands. It reads from GPC search and optional graph notes; it does
+not mutate indexes.
+
+## Health Reports
+
+Use `gpc health-report` for an operator summary that is more concise than raw
+`gpc verify` JSON:
+
+```bash
+gpc health-report --project project-slug
+gpc health-report --project project-slug --json
+gpc health-report --project project-slug --output /tmp/gpc-health.md
+```
+
+The report rolls up verify checks, index counts, graph visibility, drift signals,
+and MCP usage. Warnings are meant to guide maintenance; they are not destructive.
+
+## MCP Usage Audit
+
+Use the CLI wrapper when you want a terminal audit without exposing raw MCP
+payloads:
+
+```bash
+gpc mcp-usage --project project-slug --since 24h
+gpc mcp-usage --project project-slug --since 7d --json
+```
+
+Arguments and metadata are redacted recursively for secret-like keys such as
+`password`, `secret`, `api_key`, and token fields. The MCP tool remains
+read-only; this CLI only summarizes rows already logged in Postgres.
 
 ## Maintenance
+
+Use `gpc maintenance doctor` for a safe dry-run before considering any cleanup:
+
+```bash
+gpc maintenance doctor --project project-slug
+gpc maintenance doctor --project project-slug --json
+```
+
+It reports suspected read-model inconsistencies, missing Graphify output, and
+index/graph drift. It does not delete files, truncate tables, reset Qdrant, or
+mutate Neo4j. Any destructive repair remains a separate explicit operation.
 
 Observability rows are useful for Grafana and audits, but they should not grow
 forever on a workstation. Preview retention first:

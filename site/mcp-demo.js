@@ -60,6 +60,20 @@ function makeResultCard(r) {
   return div;
 }
 
+
+function makeSummaryCard(r) {
+  const div = document.createElement("article");
+  div.className = "demoChunk";
+  div.innerHTML = `
+    <header>
+      <span class="demoChunk__score">${escapeHtml(r.label)}</span>
+      <span class="demoChunk__file">${escapeHtml(r.value)}</span>
+    </header>
+    <pre><code>${escapeHtml(r.detail || "")}</code></pre>
+  `;
+  return div;
+}
+
 function makeNeighborRow(r) {
   const div = document.createElement("li");
   div.className = `demoRow demoRow--${r.direction} demoRow--${r.confidence.toLowerCase()}`;
@@ -126,6 +140,9 @@ async function runQuery(q, ui) {
     responseEl.appendChild(ul);
     const items = q.path.map(makePathNode);
     await streamChildren(ul, items, 180);
+  } else if (q.summary) {
+    const cards = q.summary.map(makeSummaryCard);
+    await streamChildren(responseEl, cards, 180);
   }
 
   // Tokens
@@ -152,7 +169,7 @@ async function bootDemo() {
 
   let data;
   try {
-    data = await loadQueries("./data/demo-queries.json");
+    data = await loadQueries("./data/demo-queries.json?v=20260507");
   } catch (err) {
     console.error("demo unavailable", err);
     root.innerHTML = `<p class="demoError">Demo data unavailable.</p>`;
