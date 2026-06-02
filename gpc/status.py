@@ -2,12 +2,11 @@ from __future__ import annotations
 
 from typing import Any
 
-import psycopg
 from psycopg.rows import dict_row
-from qdrant_client import QdrantClient
 from qdrant_client.models import FieldCondition, Filter, MatchValue
 
-from gpc.config import COLLECTION_NAME, POSTGRES_DSN, QDRANT_HOST, QDRANT_PORT
+from gpc.config import COLLECTION_NAME
+from gpc.db import get_qdrant, pg_connection
 from gpc.registry import resolve_project
 
 
@@ -20,7 +19,7 @@ def get_index_status(
     resolved_project = resolve_project(project=project, cwd=cwd)
     run_limit = max(1, min(runs, 20))
 
-    with psycopg.connect(POSTGRES_DSN, row_factory=dict_row) as conn:
+    with pg_connection(row_factory=dict_row) as conn:
         file_count = conn.execute(
             "select count(*) as count from gpc_files where project_id = %s",
             (resolved_project["id"],),
@@ -49,7 +48,7 @@ def get_index_status(
             (resolved_project["id"], run_limit),
         ).fetchall()
 
-    qdrant = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT)
+    qdrant = get_qdrant()
     point_count = qdrant.count(
         collection_name=COLLECTION_NAME,
         count_filter=Filter(

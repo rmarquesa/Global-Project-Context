@@ -1,23 +1,23 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
 
-import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
-from gpc.config import NEO4J_PASSWORD, NEO4J_URI, NEO4J_USER, POSTGRES_DSN
+from gpc.db import Neo4jDependencyError, get_neo4j_driver, pg_connection
 
-
-try:
-    from neo4j import GraphDatabase
-except ImportError:  # pragma: no cover - exercised in environments without optional deps
-    GraphDatabase = None
-
-
-class Neo4jDependencyError(RuntimeError):
-    pass
+__all__ = [
+    "Neo4jDependencyError",
+    "ProjectionStats",
+    "postgres_connect",
+    "neo4j_driver",
+    "ensure_neo4j_constraints",
+    "project_graph_to_neo4j",
+    "neo4j_healthcheck",
+]
 
 
 @dataclass(frozen=True)
@@ -28,18 +28,23 @@ class ProjectionStats:
     repos_written: int = 0
 
 
-def postgres_connect() -> psycopg.Connection:
-    return psycopg.connect(POSTGRES_DSN, row_factory=dict_row)
+def postgres_connect():
+    """Pooled Postgres connection with dict rows (context manager)."""
+
+    return pg_connection(row_factory=dict_row)
 
 
+@contextmanager
 def neo4j_driver():
-    if GraphDatabase is None:
-        raise Neo4jDependencyError(
-            "Missing neo4j Python driver. Install dependencies with "
-            "`./venv/bin/pip install -r requirements.txt`."
-        )
+    """Yield the shared, process-wide Neo4j driver.
 
-    return GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
+    Kept as a context manager so the many ``with neo4j_driver() as driver:``
+    call sites keep working unchanged — but the driver is shared and is NOT
+    closed on exit (it is closed once at interpreter shutdown). Closing a Neo4j
+    driver per call would defeat its built-in connection pooling.
+    """
+
+    yield get_neo4j_driver()
 
 
 def ensure_neo4j_constraints() -> None:
@@ -166,8 +171,7 @@ def _fail_projection(projection_id: str, exc: Exception) -> None:
 
 def _fetch_projects() -> list[dict[str, Any]]:
     with postgres_connect() as conn:
-        return conn.execute(
-            """
+        return conn.execute("""
             select
                 id::text as id,
                 slug,
@@ -176,14 +180,12 @@ def _fetch_projects() -> list[dict[str, Any]]:
                 description
             from gpc_projects
             order by slug
-            """
-        ).fetchall()
+            """).fetchall()
 
 
 def _fetch_repos() -> list[dict[str, Any]]:
     with postgres_connect() as conn:
-        return conn.execute(
-            """
+        return conn.execute("""
             select
                 r.id::text as id,
                 r.project_id::text as project_id,
@@ -195,14 +197,12 @@ def _fetch_repos() -> list[dict[str, Any]]:
             from gpc_repos r
             join gpc_projects p on p.id = r.project_id
             order by p.slug, r.slug
-            """
-        ).fetchall()
+            """).fetchall()
 
 
 def _fetch_entities() -> list[dict[str, Any]]:
     with postgres_connect() as conn:
-        rows = conn.execute(
-            """
+        rows = conn.execute("""
             select
                 e.id::text as id,
                 e.project_id::text as project_id,
@@ -219,15 +219,13 @@ def _fetch_entities() -> list[dict[str, Any]]:
             from gpc_entities e
             left join gpc_projects p on p.id = e.project_id
             order by e.name
-            """
-        ).fetchall()
+            """).fetchall()
     return rows
 
 
 def _fetch_relations() -> list[dict[str, Any]]:
     with postgres_connect() as conn:
-        rows = conn.execute(
-            """
+        rows = conn.execute("""
             select
                 r.id::text as id,
                 r.project_id::text as project_id,
@@ -238,8 +236,7 @@ def _fetch_relations() -> list[dict[str, Any]]:
                 r.evidence_chunk_id::text as evidence_chunk_id
             from gpc_relations r
             order by r.created_at, r.id
-            """
-        ).fetchall()
+            """).fetchall()
     # Neo4j Bolt cannot encode Decimal — cast confidence to float eagerly.
     from decimal import Decimal
 

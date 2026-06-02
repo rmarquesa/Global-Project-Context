@@ -1,7 +1,11 @@
-gitpython
-mcp
-neo4j
-psycopg[binary]
-python-dotenv
-qdrant-client
-tiktoken
+# Runtime dependencies. Lower bounds are pinned to the versions GPC is tested
+# against; upper bounds guard against breaking major releases. See pyproject.toml
+# for the canonical list — this file exists for `pip install -r` workflows.
+gitpython>=3.1,<4
+mcp>=1.27,<2
+neo4j>=6.1,<7
+psycopg[binary]>=3.3,<4
+psycopg-pool>=3.2,<4
+python-dotenv>=1.0,<2
+qdrant-client>=1.17,<2
+tiktoken>=0.12,<1

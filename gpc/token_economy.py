@@ -4,11 +4,10 @@ import argparse
 import json
 from typing import Any
 
-import psycopg
 from psycopg.rows import dict_row
 import tiktoken
 
-from gpc.config import POSTGRES_DSN
+from gpc.db import pg_connection
 from gpc.registry import resolve_project
 from gpc.search import compose_project_context
 
@@ -42,7 +41,9 @@ def parse_args() -> argparse.Namespace:
         default=6_000,
         help="Maximum characters used by retrieved context. Default: 6000.",
     )
-    parser.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    parser.add_argument(
+        "--json", action="store_true", help="Print machine-readable JSON."
+    )
     return parser.parse_args()
 
 
@@ -115,7 +116,7 @@ def estimate_for_project(
 
 
 def indexed_token_stats(project_id: str) -> dict[str, int]:
-    with psycopg.connect(POSTGRES_DSN, row_factory=dict_row) as conn:
+    with pg_connection(row_factory=dict_row) as conn:
         row = conn.execute(
             """
             select

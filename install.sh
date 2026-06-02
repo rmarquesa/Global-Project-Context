@@ -71,8 +71,21 @@ require_command() {
   fi
 }
 
+require_python_version() {
+  # GPC uses 3.10+ syntax (PEP 604 `X | None`), so an older interpreter fails
+  # in confusing ways. Check up front and fail with a clear message.
+  if ! "$PYTHON_BIN" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)'; then
+    local found
+    found="$("$PYTHON_BIN" -c 'import sys; print(".".join(map(str, sys.version_info[:3])))' 2>/dev/null || echo "unknown")"
+    echo "GPC requires Python 3.10 or newer, but '$PYTHON_BIN' is $found." >&2
+    echo "Set PYTHON_BIN to a newer interpreter, e.g. PYTHON_BIN=python3.12 ./install.sh" >&2
+    exit 1
+  fi
+}
+
 echo "==> preparing Python environment"
 require_command "$PYTHON_BIN"
+require_python_version
 if [ ! -d "$VENV_DIR" ]; then
   "$PYTHON_BIN" -m venv "$VENV_DIR"
 fi

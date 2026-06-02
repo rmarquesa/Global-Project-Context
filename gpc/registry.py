@@ -6,8 +6,7 @@ import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
-from gpc.config import POSTGRES_DSN
-
+from gpc.db import pg_connection
 
 SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 
@@ -27,8 +26,10 @@ def normalize_path(path: str | Path) -> str:
     return str(Path(path).expanduser().resolve(strict=False))
 
 
-def connect() -> psycopg.Connection:
-    return psycopg.connect(POSTGRES_DSN, row_factory=dict_row)
+def connect():
+    """Pooled Postgres connection with dict rows (context manager)."""
+
+    return pg_connection(row_factory=dict_row)
 
 
 def register_project(
@@ -43,7 +44,9 @@ def register_project(
 ) -> dict[str, Any]:
     root = Path(root_path).expanduser().resolve(strict=False)
     if not root.exists() or not root.is_dir():
-        raise FileNotFoundError(f"Project root does not exist or is not a directory: {root}")
+        raise FileNotFoundError(
+            f"Project root does not exist or is not a directory: {root}"
+        )
 
     project_slug = normalize_slug(slug or root.name)
     project_name = name or root.name
@@ -88,7 +91,9 @@ def register_project(
         return _project_with_aliases(conn, project["id"])
 
 
-def add_project_alias(project: str, alias: str, *, alias_type: str = "manual") -> dict[str, Any]:
+def add_project_alias(
+    project: str, alias: str, *, alias_type: str = "manual"
+) -> dict[str, Any]:
     with connect() as conn:
         resolved = _resolve_by_slug_or_alias(conn, project)
         _add_project_alias(conn, resolved["id"], alias, alias_type=alias_type)
@@ -106,7 +111,9 @@ def register_source(
 ) -> dict[str, Any]:
     root = Path(root_path).expanduser().resolve(strict=False)
     if not root.exists() or not root.is_dir():
-        raise FileNotFoundError(f"Source root does not exist or is not a directory: {root}")
+        raise FileNotFoundError(
+            f"Source root does not exist or is not a directory: {root}"
+        )
 
     source_slug = normalize_slug(slug or f"{source_type}-{root.name}")
     source_name = name or root.name
@@ -174,13 +181,11 @@ def link_project_source(
 
 def list_projects() -> list[dict[str, Any]]:
     with connect() as conn:
-        rows = conn.execute(
-            """
+        rows = conn.execute("""
             select id
             from gpc_projects
             order by slug
-            """
-        ).fetchall()
+            """).fetchall()
         return [_project_with_aliases(conn, row["id"]) for row in rows]
 
 
@@ -308,13 +313,11 @@ def _resolve_by_cwd(conn: psycopg.Connection, cwd: str | Path) -> dict[str, Any]
     if current_path.is_file():
         current_path = current_path.parent
 
-    projects = conn.execute(
-        """
+    projects = conn.execute("""
         select *
         from gpc_projects
         order by length(root_path) desc
-        """
-    ).fetchall()
+        """).fetchall()
 
     for project in projects:
         root = Path(project["root_path"]).expanduser().resolve(strict=False)
@@ -390,7 +393,9 @@ def register_repo(
 
     root = Path(root_path).expanduser().resolve(strict=False)
     if not root.exists() or not root.is_dir():
-        raise FileNotFoundError(f"Repo root does not exist or is not a directory: {root}")
+        raise FileNotFoundError(
+            f"Repo root does not exist or is not a directory: {root}"
+        )
 
     repo_slug = normalize_slug(slug or root.name)
     repo_name = name or root.name
@@ -455,14 +460,12 @@ def list_repos(project: str | None = None) -> list[dict[str, Any]]:
                 (resolved["id"],),
             ).fetchall()
         else:
-            rows = conn.execute(
-                """
+            rows = conn.execute("""
                 select r.*, p.slug as project_slug, p.name as project_name
                 from gpc_repos r
                 join gpc_projects p on p.id = r.project_id
                 order by p.slug, r.slug
-                """
-            ).fetchall()
+                """).fetchall()
     return rows
 
 
@@ -495,7 +498,11 @@ def resolve_repo(
                     raise ProjectResolutionError(
                         f"Repo {repo!r} not found under project {project_row['slug']!r}"
                     )
-            return {"project": project_row, "repo": repo_row, "resolution_reason": "explicit"}
+            return {
+                "project": project_row,
+                "repo": repo_row,
+                "resolution_reason": "explicit",
+            }
 
         if cwd is not None:
             match = _resolve_repo_by_cwd(conn, cwd)
@@ -535,14 +542,12 @@ def _resolve_repo_by_cwd(
     if current_path.is_file():
         current_path = current_path.parent
 
-    repos = conn.execute(
-        """
+    repos = conn.execute("""
         select r.*, p.slug as project_slug, p.name as project_name, p.id as project_project_id
         from gpc_repos r
         join gpc_projects p on p.id = r.project_id
         order by length(r.root_path) desc
-        """
-    ).fetchall()
+        """).fetchall()
 
     for repo in repos:
         root = Path(repo["root_path"]).expanduser().resolve(strict=False)
@@ -621,7 +626,9 @@ def consolidate_projects(
                 (source_slug,),
             ).fetchone()
             if not source:
-                raise ProjectResolutionError(f"Source project not found: {source_slug!r}")
+                raise ProjectResolutionError(
+                    f"Source project not found: {source_slug!r}"
+                )
 
             repo = conn.execute(
                 """
@@ -646,33 +653,51 @@ def consolidate_projects(
             stats["repos_created"] += 1
             repo_id = repo["id"]
 
-            stats["files_moved"] += conn.execute(
-                "update gpc_files set project_id = %s, repo_id = %s where project_id = %s",
-                (target_id, repo_id, source["id"]),
-            ).rowcount or 0
-            stats["chunks_moved"] += conn.execute(
-                "update gpc_chunks set project_id = %s, repo_id = %s where project_id = %s",
-                (target_id, repo_id, source["id"]),
-            ).rowcount or 0
-            stats["entities_moved"] += conn.execute(
-                "update gpc_entities set project_id = %s where project_id = %s",
-                (target_id, source["id"]),
-            ).rowcount or 0
-            stats["relations_moved"] += conn.execute(
-                "update gpc_relations set project_id = %s where project_id = %s",
-                (target_id, source["id"]),
-            ).rowcount or 0
-            stats["decisions_moved"] += conn.execute(
-                "update gpc_decisions set project_id = %s where project_id = %s",
-                (target_id, source["id"]),
-            ).rowcount or 0
-            stats["aliases_moved"] += conn.execute(
-                """
+            stats["files_moved"] += (
+                conn.execute(
+                    "update gpc_files set project_id = %s, repo_id = %s where project_id = %s",
+                    (target_id, repo_id, source["id"]),
+                ).rowcount
+                or 0
+            )
+            stats["chunks_moved"] += (
+                conn.execute(
+                    "update gpc_chunks set project_id = %s, repo_id = %s where project_id = %s",
+                    (target_id, repo_id, source["id"]),
+                ).rowcount
+                or 0
+            )
+            stats["entities_moved"] += (
+                conn.execute(
+                    "update gpc_entities set project_id = %s where project_id = %s",
+                    (target_id, source["id"]),
+                ).rowcount
+                or 0
+            )
+            stats["relations_moved"] += (
+                conn.execute(
+                    "update gpc_relations set project_id = %s where project_id = %s",
+                    (target_id, source["id"]),
+                ).rowcount
+                or 0
+            )
+            stats["decisions_moved"] += (
+                conn.execute(
+                    "update gpc_decisions set project_id = %s where project_id = %s",
+                    (target_id, source["id"]),
+                ).rowcount
+                or 0
+            )
+            stats["aliases_moved"] += (
+                conn.execute(
+                    """
                 update gpc_project_aliases set project_id = %s
                 where project_id = %s
                 """,
-                (target_id, source["id"]),
-            ).rowcount or 0
+                    (target_id, source["id"]),
+                ).rowcount
+                or 0
+            )
             # The source slug itself should remain resolvable as an alias of
             # the target. If the alias row was not there (e.g. it was never
             # registered explicitly), create it now.

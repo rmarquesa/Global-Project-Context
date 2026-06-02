@@ -3,13 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-import psycopg
 from psycopg.rows import dict_row
-from qdrant_client import QdrantClient
 from qdrant_client.models import FieldCondition, Filter, MatchValue
 
-from gpc.config import COLLECTION_NAME, POSTGRES_DSN, QDRANT_HOST, QDRANT_PORT
-from gpc.embeddings import embed_texts
+from gpc.config import COLLECTION_NAME
+from gpc.db import get_qdrant, pg_connection
+from gpc.embeddings import embed_query
 from gpc.registry import normalize_slug, resolve_project
 
 
@@ -34,7 +33,7 @@ def search_project_context(
     repo: str | list[str] | None = None,
 ) -> tuple[dict[str, Any], list[SearchResult]]:
     resolved_project = resolve_project(project=project, cwd=cwd)
-    batch = embed_texts([query])
+    query_vector = embed_query(query)
 
     must = [
         FieldCondition(
@@ -60,10 +59,10 @@ def search_project_context(
                 )
             )
 
-    qdrant = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT)
+    qdrant = get_qdrant()
     response = qdrant.query_points(
         collection_name=COLLECTION_NAME,
-        query=batch.vectors[0],
+        query=query_vector,
         query_filter=Filter(must=must),
         limit=max(limit * 3, limit),
         with_payload=True,
@@ -231,7 +230,7 @@ def _graph_annotations(
 
 
 def _fetch_chunks(chunk_ids: list[str]) -> list[dict[str, Any]]:
-    with psycopg.connect(POSTGRES_DSN, row_factory=dict_row) as conn:
+    with pg_connection(row_factory=dict_row) as conn:
         return conn.execute(
             """
             select

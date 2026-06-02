@@ -19,7 +19,9 @@ from gpc.config import (
     POSTGRES_DSN,
     QDRANT_HOST,
     QDRANT_PORT,
+    enforce_credentials,
 )
+from gpc.db import pg_connection
 from gpc.embeddings import active_embedding_model, embedding_dimension
 from gpc.drift import detect_drift, list_drift_signals
 from gpc.graph_query import (
@@ -37,6 +39,9 @@ from gpc.search import compose_project_context, search_project_context
 from gpc.status import get_index_status
 from gpc.token_economy import estimate_for_project
 
+# The MCP server is the network-exposed surface, so verify credentials here
+# (not at config import time, which would also fire in tests and CLI helpers).
+enforce_credentials()
 
 mcp = FastMCP(
     "GPC",
@@ -128,7 +133,9 @@ def mcp_list_projects() -> dict[str, Any]:
 
 @mcp.tool(name="gpc_list_repos")
 @log_mcp_call("gpc_list_repos")
-def mcp_list_repos(project: str | None = None, cwd: str | None = None) -> dict[str, Any]:
+def mcp_list_repos(
+    project: str | None = None, cwd: str | None = None
+) -> dict[str, Any]:
     """List repositories under a project. Pass cwd to auto-resolve the project."""
     try:
         if not project and cwd:
@@ -269,8 +276,7 @@ def mcp_context(
             "include_graph": include_graph,
             "context": context,
             "sources": [
-                _search_result_payload(result, content_chars=0)
-                for result in results
+                _search_result_payload(result, content_chars=0) for result in results
             ],
         }
     except Exception as exc:
@@ -534,70 +540,71 @@ def mcp_usage(
         safe_window = max(1, min(int(window_hours), 720))
         resolved = None
         if project or cwd:
-            resolved = resolve_project(project=project, cwd=_effective_cwd(cwd) if cwd else None)
-        with psycopg.connect(POSTGRES_DSN) as conn:
-            with conn.cursor() as cur:
-                totals_row = conn.execute(
-                    """
-                    select
-                        count(*) as total,
-                        count(*) filter (where success) as ok,
-                        count(*) filter (where not success) as failed,
-                        count(distinct client_name) filter (where client_name is not null) as clients,
-                        min(called_at) as first_call,
-                        max(called_at) as last_call
-                    from gpc_mcp_calls
-                    where called_at > now() - (%s::text || ' hours')::interval
-                      and (%s::uuid is null or project_id = %s::uuid)
-                    """,
-                    (
-                        str(safe_window),
-                        str(resolved["id"]) if resolved else None,
-                        str(resolved["id"]) if resolved else None,
-                    ),
-                ).fetchone()
-                by_tool = conn.execute(
-                    """
-                    select tool, count(*) as calls,
-                           count(*) filter (where not success) as errors,
-                           avg(duration_ms)::int as avg_ms
-                    from gpc_mcp_calls
-                    where called_at > now() - (%s::text || ' hours')::interval
-                      and (%s::uuid is null or project_id = %s::uuid)
-                    group by tool
-                    order by calls desc
-                    """,
-                    (
-                        str(safe_window),
-                        str(resolved["id"]) if resolved else None,
-                        str(resolved["id"]) if resolved else None,
-                    ),
-                ).fetchall()
-                by_client = conn.execute(
-                    """
-                    select coalesce(client_name, 'unknown') as client,
-                           count(*) as calls
-                    from gpc_mcp_calls
-                    where called_at > now() - (%s::text || ' hours')::interval
-                      and (%s::uuid is null or project_id = %s::uuid)
-                    group by 1 order by calls desc
-                    """,
-                    (
-                        str(safe_window),
-                        str(resolved["id"]) if resolved else None,
-                        str(resolved["id"]) if resolved else None,
-                    ),
-                ).fetchall()
-                by_project = conn.execute(
-                    """
-                    select coalesce(project_slug, 'unresolved') as project,
-                           count(*) as calls
-                    from gpc_mcp_calls
-                    where called_at > now() - (%s::text || ' hours')::interval
-                    group by 1 order by calls desc
-                    """,
-                    (str(safe_window),),
-                ).fetchall()
+            resolved = resolve_project(
+                project=project, cwd=_effective_cwd(cwd) if cwd else None
+            )
+        with pg_connection() as conn:
+            totals_row = conn.execute(
+                """
+                select
+                    count(*) as total,
+                    count(*) filter (where success) as ok,
+                    count(*) filter (where not success) as failed,
+                    count(distinct client_name) filter (where client_name is not null) as clients,
+                    min(called_at) as first_call,
+                    max(called_at) as last_call
+                from gpc_mcp_calls
+                where called_at > now() - (%s::text || ' hours')::interval
+                  and (%s::uuid is null or project_id = %s::uuid)
+                """,
+                (
+                    str(safe_window),
+                    str(resolved["id"]) if resolved else None,
+                    str(resolved["id"]) if resolved else None,
+                ),
+            ).fetchone()
+            by_tool = conn.execute(
+                """
+                select tool, count(*) as calls,
+                       count(*) filter (where not success) as errors,
+                       avg(duration_ms)::int as avg_ms
+                from gpc_mcp_calls
+                where called_at > now() - (%s::text || ' hours')::interval
+                  and (%s::uuid is null or project_id = %s::uuid)
+                group by tool
+                order by calls desc
+                """,
+                (
+                    str(safe_window),
+                    str(resolved["id"]) if resolved else None,
+                    str(resolved["id"]) if resolved else None,
+                ),
+            ).fetchall()
+            by_client = conn.execute(
+                """
+                select coalesce(client_name, 'unknown') as client,
+                       count(*) as calls
+                from gpc_mcp_calls
+                where called_at > now() - (%s::text || ' hours')::interval
+                  and (%s::uuid is null or project_id = %s::uuid)
+                group by 1 order by calls desc
+                """,
+                (
+                    str(safe_window),
+                    str(resolved["id"]) if resolved else None,
+                    str(resolved["id"]) if resolved else None,
+                ),
+            ).fetchall()
+            by_project = conn.execute(
+                """
+                select coalesce(project_slug, 'unresolved') as project,
+                       count(*) as calls
+                from gpc_mcp_calls
+                where called_at > now() - (%s::text || ' hours')::interval
+                group by 1 order by calls desc
+                """,
+                (str(safe_window),),
+            ).fetchall()
         totals = {
             "total": (totals_row[0] if totals_row else 0) or 0,
             "ok": (totals_row[1] if totals_row else 0) or 0,
@@ -615,12 +622,8 @@ def mcp_usage(
                 {"tool": row[0], "calls": row[1], "errors": row[2], "avg_ms": row[3]}
                 for row in by_tool
             ],
-            "by_client": [
-                {"client": row[0], "calls": row[1]} for row in by_client
-            ],
-            "by_project": [
-                {"project": row[0], "calls": row[1]} for row in by_project
-            ],
+            "by_client": [{"client": row[0], "calls": row[1]} for row in by_client],
+            "by_project": [{"project": row[0], "calls": row[1]} for row in by_project],
         }
     except Exception as exc:
         return {"ok": False, "error": _error_payload(exc)}

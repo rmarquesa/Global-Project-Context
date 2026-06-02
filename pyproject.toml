@@ -1,0 +1,64 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gpc"
+description = "Global Project Context — a local persistent context layer for AI coding tools."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+authors = [{ name = "Rodrigo Alves" }]
+keywords = ["mcp", "context", "embeddings", "qdrant", "neo4j", "postgres", "ai"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dynamic = ["version"]
+dependencies = [
+    "gitpython>=3.1,<4",
+    "mcp>=1.27,<2",
+    "neo4j>=6.1,<7",
+    "psycopg[binary]>=3.3,<4",
+    "psycopg-pool>=3.2,<4",
+    "python-dotenv>=1.0,<2",
+    "qdrant-client>=1.17,<2",
+    "tiktoken>=0.12,<1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "black==26.3.1",
+    "pytest==9.0.3",
+    "ruff==0.15.12",
+]
+
+[project.urls]
+Homepage = "https://github.com/rmarquesa/Global-Project-Context"
+Repository = "https://github.com/rmarquesa/Global-Project-Context"
+
+[tool.setuptools]
+packages = ["gpc", "scripts"]
+
+[tool.setuptools.dynamic]
+version = { attr = "gpc.__version__" }
+
+[tool.black]
+line-length = 88
+target-version = ["py310", "py311", "py312"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+# Keep ruff's default rule set (pyflakes + a safe pycodestyle subset). CI lints
+# changed files with these rules; the critical-checks step pins E9,F63,F7,F82.
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Smoke tests require live Postgres/Qdrant/Neo4j/Ollama; exclude them from the
+# default (CI) run. Invoke them explicitly with `pytest tests/smoke`.
+addopts = "--ignore=tests/smoke"

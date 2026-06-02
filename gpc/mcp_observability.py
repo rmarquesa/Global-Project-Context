@@ -20,10 +20,9 @@ import sys
 import time
 from typing import Any, Callable
 
-import psycopg
 from psycopg.types.json import Jsonb
 
-from gpc.config import POSTGRES_DSN
+from gpc.db import pg_connection
 
 ARG_WHITELIST = {
     "project",
@@ -121,7 +120,7 @@ def summarize_mcp_usage(
     if project:
         where.append("project_slug = %s")
         params.append(project)
-    with psycopg.connect(POSTGRES_DSN) as conn:
+    with pg_connection() as conn:
         rows = conn.execute(
             f"""
             select tool, project_slug, client_name, duration_ms, success, error_type, args, result_meta
@@ -259,7 +258,7 @@ def _write_log(
     error_message: str | None,
 ) -> dict[str, Any] | None:
     try:
-        with psycopg.connect(POSTGRES_DSN) as conn:
+        with pg_connection() as conn:
             resolved = (
                 result_meta.get("resolved_project")
                 if isinstance(result_meta, dict)
@@ -373,7 +372,7 @@ def _resolve_project_id(project_slug: str | None) -> Any:
     if not project_slug:
         return None
     try:
-        with psycopg.connect(POSTGRES_DSN) as conn:
+        with pg_connection() as conn:
             row = conn.execute(
                 "select id from gpc_projects where slug = %s",
                 (project_slug,),
@@ -453,7 +452,7 @@ def _write_token_savings_sample(
             ),
             "estimate_project_name": estimate.get("project_name") if estimate else None,
         }
-        with psycopg.connect(POSTGRES_DSN) as conn:
+        with pg_connection() as conn:
             conn.execute(
                 """
                 insert into gpc_token_savings_samples (

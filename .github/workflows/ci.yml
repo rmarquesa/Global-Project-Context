@@ -27,7 +27,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -r requirements-dev.txt
+          python -m pip install -r requirements.txt -r requirements-dev.txt
 
       - name: Determine changed Python files
         shell: bash
@@ -66,3 +66,8 @@ jobs:
           else
             echo "No changed Python files."
           fi
+
+      - name: Run unit tests
+        # Smoke tests need live Postgres/Qdrant/Neo4j/Ollama and are excluded via
+        # pyproject's addopts (--ignore=tests/smoke).
+        run: python -m pytest
