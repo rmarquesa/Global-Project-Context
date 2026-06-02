@@ -19,7 +19,7 @@ This document explains how `gpc token-savings` measures that reduction, what
 the numbers mean, and what they do not include.
 
 For ongoing metrics, GPC also writes token-economy samples to Postgres whenever
-`gpc.search`, `gpc.context` or `gpc.estimate_token_savings` succeeds through
+`gpc_search`, `gpc_context` or `gpc_estimate_token_savings` succeeds through
 the MCP server. See [Observability](observability.md) for the Grafana dashboard.
 
 ## Measuring Savings
@@ -41,7 +41,7 @@ The command compares two values for that single query:
 | `saved_tokens` | `indexed_tokens − retrieved_tokens`. |
 | `savings_percent` | `saved_tokens / indexed_tokens × 100`. |
 
-`max_chunks` and `max_chars` (passed through to `gpc.context`) cap how big
+`max_chunks` and `max_chars` (passed through to `gpc_context`) cap how big
 the retrieved block can grow.
 
 ## Worked Example
@@ -98,14 +98,14 @@ on discovery.
 |---|---:|
 | `query` text sent via tool_use | 10–50 |
 | MCP tool-use / tool-result JSON overhead | 100–200 |
-| Context block returned by `gpc.context` | up to `max_chars / 4` (≈1,500–2,000 with defaults) |
+| Context block returned by `gpc_context` | up to `max_chars / 4` (≈1,500–2,000 with defaults) |
 | Query embedding (Ollama, local) | **0** |
 | Postgres / Qdrant access | **0** |
 
-Total: ~**1,900–2,200 tokens** for a typical `gpc.context` call.
+Total: ~**1,900–2,200 tokens** for a typical `gpc_context` call.
 
-Structural queries (`gpc.graph_neighbors`, `gpc.graph_summary`,
-`gpc.graph_path`) return smaller payloads — typically 500–3,000 tokens —
+Structural queries (`gpc_graph_neighbors`, `gpc_graph_summary`,
+`gpc_graph_path`) return smaller payloads — typically 500–3,000 tokens —
 because they emit nodes and edges, not full text chunks.
 
 ### Cost of the "no-MCP" path
@@ -173,5 +173,5 @@ expectations. If files appear missing, rerun `gpc-index` without
 
 - [Operations](operations.md#index-a-project) — how to index and inspect a
   project.
-- [MCP clients](mcp-clients.md#mcp-tools) — `gpc.estimate_token_savings`
+- [MCP clients](mcp-clients.md#mcp-tools) — `gpc_estimate_token_savings`
   surfaces the same metric to AI clients.

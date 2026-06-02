@@ -24,21 +24,21 @@ def test_summarize_mcp_rows_groups_by_client_tool_and_error() -> None:
     rows = [
         {
             "client_name": "claude",
-            "tool": "gpc.search",
+            "tool": "gpc_search",
             "success": True,
             "duration_ms": 10,
             "project_slug": "gpc",
         },
         {
             "client_name": "claude",
-            "tool": "gpc.search",
+            "tool": "gpc_search",
             "success": False,
             "duration_ms": 30,
             "project_slug": "gpc",
         },
         {
             "client_name": "codex",
-            "tool": "gpc.context",
+            "tool": "gpc_context",
             "success": True,
             "duration_ms": 20,
             "project_slug": "other",
@@ -49,6 +49,6 @@ def test_summarize_mcp_rows_groups_by_client_tool_and_error() -> None:
 
     assert summary["total_calls"] == 3
     assert summary["by_client"][0]["client"] == "claude"
-    assert summary["by_tool"][0]["tool"] == "gpc.search"
+    assert summary["by_tool"][0]["tool"] == "gpc_search"
     assert summary["errors_by_tool"][0]["errors"] == 1
     assert summary["top_projects"][0]["project"] == "gpc"

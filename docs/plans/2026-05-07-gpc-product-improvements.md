@@ -49,7 +49,7 @@ graphify update .
 
 ## PR 1 — Graph self-visibility and Graphify/GPC alignment
 
-**Objective:** Make the GPC project visible to its own graph MCP tools and prevent regressions where `gpc.graph_summary(project="gpc")` returns `found=false` after Graphify update.
+**Objective:** Make the GPC project visible to its own graph MCP tools and prevent regressions where `gpc_graph_summary(project="gpc")` returns `found=false` after Graphify update.
 
 **Why first:** Semantic retrieval is already dogfooding the repo. Graph retrieval is the current gap.
 

@@ -4,7 +4,7 @@
       "id": "retrieval",
       "label": "How does retrieval work?",
       "hint": "Semantic search across chunks",
-      "tool": "gpc.search",
+      "tool": "gpc_search",
       "request": {
         "query": "how does retrieval work",
         "project": "global-project-context",
@@ -18,7 +18,7 @@
           "score": 0.87,
           "source_file": "gpc/mcp_server.py",
           "chunk_id": "gpc_mcp_server_py:retrieve",
-          "snippet": "@mcp.tool(name=\"gpc.search\")\ndef mcp_search(query: str, project: str | None = None, ... ) -> dict[str, Any]:\n    \"\"\"Search indexed project chunks with Ollama embeddings and Qdrant.\"\"\"\n    resolved_project, results = search_project_context(query, project=project, ...)"
+          "snippet": "@mcp.tool(name=\"gpc_search\")\ndef mcp_search(query: str, project: str | None = None, ... ) -> dict[str, Any]:\n    \"\"\"Search indexed project chunks with Ollama embeddings and Qdrant.\"\"\"\n    resolved_project, results = search_project_context(query, project=project, ...)"
         },
         {
           "score": 0.81,
@@ -44,7 +44,7 @@
       "id": "neighbors",
       "label": "What does mcp_server.py touch?",
       "hint": "Graph neighbors of a node",
-      "tool": "gpc.graph_neighbors",
+      "tool": "gpc_graph_neighbors",
       "request": {
         "node": "mcp_server.py",
         "project": "global-project-context",
@@ -131,7 +131,7 @@
       "id": "path",
       "label": "Path: cli.py \u2192 Qdrant",
       "hint": "Shortest path through the graph",
-      "tool": "gpc.graph_path",
+      "tool": "gpc_graph_path",
       "request": {
         "a": "cli.py",
         "b": "qdrant",
@@ -184,7 +184,7 @@
       "id": "health",
       "label": "Is this context healthy?",
       "hint": "Operator health rollup",
-      "tool": "gpc.health-report",
+      "tool": "gpc_health-report",
       "request": {
         "project": "gpc",
         "quick": true,

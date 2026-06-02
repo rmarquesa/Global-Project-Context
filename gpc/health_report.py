@@ -177,5 +177,5 @@ def _recommended_actions(sections: dict[str, Any]) -> list[str]:
             "Run gpc verify --project <project> --json and inspect failing checks."
         )
     if sections["drift"].get("warn_or_fail"):
-        actions.append("Inspect gpc.drift_signals before refactoring graph-heavy code.")
+        actions.append("Inspect gpc_drift_signals before refactoring graph-heavy code.")
     return actions

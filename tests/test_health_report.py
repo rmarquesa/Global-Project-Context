@@ -20,7 +20,7 @@ def test_build_health_report_rolls_up_statuses_and_counts() -> None:
             "found": True,
             "summary": {"node_count": 7, "community_count": 2},
         },
-        mcp_usage={"total_calls": 5, "by_tool": [{"tool": "gpc.search", "calls": 3}]},
+        mcp_usage={"total_calls": 5, "by_tool": [{"tool": "gpc_search", "calls": 3}]},
         drift_signals=[{"severity": "warn"}],
     )
 

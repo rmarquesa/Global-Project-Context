@@ -68,7 +68,7 @@ Representative semantic query:
 como as fotos de imóveis são armazenadas e publicadas?
 ```
 
-Top repositories returned by `gpc.search`:
+Top repositories returned by `gpc_search`:
 
 1. `workers-photos`
 2. `workers-photos`
@@ -84,7 +84,7 @@ Hybrid context query:
 como o gateway se relaciona com workers de fotos?
 ```
 
-`gpc.context(include_graph=true, graph_min_confidence="INFERRED")` returned a
+`gpc_context(include_graph=true, graph_min_confidence="INFERRED")` returned a
 3,498-character context block with sources from:
 
 - `workers-gateway`
@@ -96,7 +96,7 @@ test surfaces instead of only returning the photos worker.
 
 ## Token Economy
 
-For the photo workflow query, `gpc.estimate_token_savings` reported:
+For the photo workflow query, `gpc_estimate_token_savings` reported:
 
 | Metric | Value |
 |---|---:|
@@ -118,7 +118,7 @@ Grafana dashboard: `GPC / GPC Token Economy`, available locally at
 
 ## Graph Summary
 
-Top central nodes from `gpc.graph_summary`:
+Top central nodes from `gpc_graph_summary`:
 
 | Label | Repo | Degree |
 |---|---|---:|
@@ -145,7 +145,7 @@ refactor discovery, but it is still inferred evidence.
 
 ## Path Check
 
-`gpc.graph_path` found a short inferred path between shared auth/crypto
+`gpc_graph_path` found a short inferred path between shared auth/crypto
 symbols:
 
 ```text

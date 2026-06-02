@@ -53,8 +53,8 @@ mcp = FastMCP(
 )
 
 
-@mcp.tool(name="gpc.health")
-@log_mcp_call("gpc.health")
+@mcp.tool(name="gpc_health")
+@log_mcp_call("gpc_health")
 def health() -> dict[str, Any]:
     """Check whether GPC backing services are reachable."""
     checks: dict[str, Any] = {}
@@ -93,8 +93,8 @@ def health() -> dict[str, Any]:
     }
 
 
-@mcp.tool(name="gpc.resolve_project")
-@log_mcp_call("gpc.resolve_project")
+@mcp.tool(name="gpc_resolve_project")
+@log_mcp_call("gpc_resolve_project")
 def mcp_resolve_project(
     cwd: str | None = None,
     project: str | None = None,
@@ -107,14 +107,14 @@ def mcp_resolve_project(
         return {"ok": False, "error": _error_payload(exc)}
 
 
-@mcp.tool(name="gpc.list_projects")
-@log_mcp_call("gpc.list_projects")
+@mcp.tool(name="gpc_list_projects")
+@log_mcp_call("gpc_list_projects")
 def mcp_list_projects() -> dict[str, Any]:
     """List projects registered in GPC."""
     try:
         projects = [_project_payload(project) for project in list_projects()]
         # Attach repos to each project so clients see the full picture without
-        # needing a second round-trip to gpc.list_repos.
+        # needing a second round-trip to gpc_list_repos.
         all_repos = list_repos()
         by_project: dict[str, list[dict[str, Any]]] = {}
         for repo in all_repos:
@@ -126,8 +126,8 @@ def mcp_list_projects() -> dict[str, Any]:
         return {"ok": False, "error": _error_payload(exc)}
 
 
-@mcp.tool(name="gpc.list_repos")
-@log_mcp_call("gpc.list_repos")
+@mcp.tool(name="gpc_list_repos")
+@log_mcp_call("gpc_list_repos")
 def mcp_list_repos(project: str | None = None, cwd: str | None = None) -> dict[str, Any]:
     """List repositories under a project. Pass cwd to auto-resolve the project."""
     try:
@@ -140,8 +140,8 @@ def mcp_list_repos(project: str | None = None, cwd: str | None = None) -> dict[s
         return {"ok": False, "error": _error_payload(exc)}
 
 
-@mcp.tool(name="gpc.resolve_repo")
-@log_mcp_call("gpc.resolve_repo")
+@mcp.tool(name="gpc_resolve_repo")
+@log_mcp_call("gpc_resolve_repo")
 def mcp_resolve_repo(
     cwd: str | None = None,
     project: str | None = None,
@@ -149,9 +149,9 @@ def mcp_resolve_repo(
 ) -> dict[str, Any]:
     """Resolve a (project, repo) tuple from cwd or explicit slugs.
 
-    Prefer this over gpc.resolve_project when the caller knows it is inside a
+    Prefer this over gpc_resolve_project when the caller knows it is inside a
     specific repo of a multi-repo project and wants the repo scope pre-applied
-    to gpc.search / gpc.context.
+    to gpc_search / gpc_context.
     """
     try:
         resolved = resolve_repo(cwd=_effective_cwd(cwd), project=project, repo=repo)
@@ -165,8 +165,8 @@ def mcp_resolve_repo(
         return {"ok": False, "error": _error_payload(exc)}
 
 
-@mcp.tool(name="gpc.index_status")
-@log_mcp_call("gpc.index_status")
+@mcp.tool(name="gpc_index_status")
+@log_mcp_call("gpc_index_status")
 def mcp_index_status(
     project: str | None = None,
     cwd: str | None = None,
@@ -181,8 +181,8 @@ def mcp_index_status(
         return {"ok": False, "error": _error_payload(exc)}
 
 
-@mcp.tool(name="gpc.search")
-@log_mcp_call("gpc.search")
+@mcp.tool(name="gpc_search")
+@log_mcp_call("gpc_search")
 def mcp_search(
     query: str,
     project: str | None = None,
@@ -220,8 +220,8 @@ def mcp_search(
         return {"ok": False, "error": _error_payload(exc)}
 
 
-@mcp.tool(name="gpc.context")
-@log_mcp_call("gpc.context")
+@mcp.tool(name="gpc_context")
+@log_mcp_call("gpc_context")
 def mcp_context(
     query: str,
     project: str | None = None,
@@ -277,8 +277,8 @@ def mcp_context(
         return {"ok": False, "error": _error_payload(exc)}
 
 
-@mcp.tool(name="gpc.graph_neighbors")
-@log_mcp_call("gpc.graph_neighbors")
+@mcp.tool(name="gpc_graph_neighbors")
+@log_mcp_call("gpc_graph_neighbors")
 def mcp_graph_neighbors(
     node: str,
     project: str | None = None,
@@ -317,8 +317,8 @@ def mcp_graph_neighbors(
         return {"ok": False, "error": _error_payload(exc)}
 
 
-@mcp.tool(name="gpc.graph_summary")
-@log_mcp_call("gpc.graph_summary")
+@mcp.tool(name="gpc_graph_summary")
+@log_mcp_call("gpc_graph_summary")
 def mcp_graph_summary(
     project: str | None = None,
     cwd: str | None = None,
@@ -344,8 +344,8 @@ def mcp_graph_summary(
         return {"ok": False, "error": _error_payload(exc)}
 
 
-@mcp.tool(name="gpc.graph_community")
-@log_mcp_call("gpc.graph_community")
+@mcp.tool(name="gpc_graph_community")
+@log_mcp_call("gpc_graph_community")
 def mcp_graph_community(
     community_id: int,
     project: str | None = None,
@@ -355,7 +355,7 @@ def mcp_graph_community(
 ) -> dict[str, Any]:
     """Drill into one Graphify community: members, repos, external bridges.
 
-    Use after ``gpc.graph_summary`` when a community looks interesting and you
+    Use after ``gpc_graph_summary`` when a community looks interesting and you
     want to inspect its members and how it connects to the rest of the graph.
     """
     try:
@@ -372,8 +372,8 @@ def mcp_graph_community(
         return {"ok": False, "error": _error_payload(exc)}
 
 
-@mcp.tool(name="gpc.graph_path")
-@log_mcp_call("gpc.graph_path")
+@mcp.tool(name="gpc_graph_path")
+@log_mcp_call("gpc_graph_path")
 def mcp_graph_path(
     a: str,
     b: str,
@@ -408,8 +408,8 @@ def mcp_graph_path(
         return {"ok": False, "error": _error_payload(exc)}
 
 
-@mcp.tool(name="gpc.self_metrics")
-@log_mcp_call("gpc.self_metrics")
+@mcp.tool(name="gpc_self_metrics")
+@log_mcp_call("gpc_self_metrics")
 def mcp_self_metrics(
     project: str | None = None,
     cwd: str | None = None,
@@ -447,8 +447,8 @@ def mcp_self_metrics(
         return {"ok": False, "error": _error_payload(exc)}
 
 
-@mcp.tool(name="gpc.graph_diff")
-@log_mcp_call("gpc.graph_diff")
+@mcp.tool(name="gpc_graph_diff")
+@log_mcp_call("gpc_graph_diff")
 def mcp_graph_diff(
     project: str | None = None,
     cwd: str | None = None,
@@ -460,7 +460,7 @@ def mcp_graph_diff(
 
     Defaults compare the latest snapshot to the most recent one older than
     ``window_hours`` ago. Pass ``from_id`` + ``to_id`` for an exact pair
-    (obtain them from ``gpc.self_metrics``).
+    (obtain them from ``gpc_self_metrics``).
     """
     try:
         resolved = resolve_project(project=project, cwd=_effective_cwd(cwd))
@@ -476,8 +476,8 @@ def mcp_graph_diff(
         return {"ok": False, "error": _error_payload(exc)}
 
 
-@mcp.tool(name="gpc.drift_signals")
-@log_mcp_call("gpc.drift_signals")
+@mcp.tool(name="gpc_drift_signals")
+@log_mcp_call("gpc_drift_signals")
 def mcp_drift_signals(
     project: str | None = None,
     cwd: str | None = None,
@@ -517,8 +517,8 @@ def mcp_drift_signals(
         return {"ok": False, "error": _error_payload(exc)}
 
 
-@mcp.tool(name="gpc.mcp_usage")
-@log_mcp_call("gpc.mcp_usage")
+@mcp.tool(name="gpc_mcp_usage")
+@log_mcp_call("gpc_mcp_usage")
 def mcp_usage(
     window_hours: int = 24,
     project: str | None = None,
@@ -626,8 +626,8 @@ def mcp_usage(
         return {"ok": False, "error": _error_payload(exc)}
 
 
-@mcp.tool(name="gpc.estimate_token_savings")
-@log_mcp_call("gpc.estimate_token_savings")
+@mcp.tool(name="gpc_estimate_token_savings")
+@log_mcp_call("gpc_estimate_token_savings")
 def mcp_estimate_token_savings(
     query: str,
     project: str | None = None,

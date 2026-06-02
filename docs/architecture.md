@@ -188,7 +188,7 @@ embedder
 ```text
 AI client query
   │
-  ▼ MCP gpc.search / gpc.context
+  ▼ MCP gpc_search / gpc_context
 embed query (Ollama)
   │
   ▼ filter by project
@@ -228,27 +228,27 @@ explicit and inspectable.
 
 The current server exposes seventeen read-only tools across five surfaces:
 
-- **Identity / discovery** — `gpc.health`, `gpc.resolve_project`,
-  `gpc.resolve_repo`, `gpc.list_projects`, `gpc.list_repos`,
-  `gpc.index_status`.
-- **Semantic retrieval** — `gpc.search`, `gpc.context`,
-  `gpc.estimate_token_savings`. These run over Qdrant embeddings and accept
+- **Identity / discovery** — `gpc_health`, `gpc_resolve_project`,
+  `gpc_resolve_repo`, `gpc_list_projects`, `gpc_list_repos`,
+  `gpc_index_status`.
+- **Semantic retrieval** — `gpc_search`, `gpc_context`,
+  `gpc_estimate_token_savings`. These run over Qdrant embeddings and accept
   an optional `repo` filter.
-- **Structural queries** — `gpc.graph_neighbors`, `gpc.graph_summary`,
-  `gpc.graph_path`, `gpc.graph_community`. These read the Neo4j Graphify
+- **Structural queries** — `gpc_graph_neighbors`, `gpc_graph_summary`,
+  `gpc_graph_path`, `gpc_graph_community`. These read the Neo4j Graphify
   projection and expose `confidence` on every edge; by default only
   `EXTRACTED` edges are returned. `graph_summary` splits god nodes into
   `god_nodes` (distinctive, likely architectural hubs) and `utility_hubs`
   (generic bootstrap/dispatch names like `run()` / `main()` / `connect()`)
   so the caller can ignore the second bucket without losing the signal.
-- **Longitudinal self-metrics** — `gpc.self_metrics`, `gpc.graph_diff`,
-  `gpc.drift_signals`.
+- **Longitudinal self-metrics** — `gpc_self_metrics`, `gpc_graph_diff`,
+  `gpc_drift_signals`.
   Writes and reads rows of ``gpc_self_metrics`` (populated at the end of
   every ``gpc-index`` and ``gpc graph-bridge`` run). Drives the drift
   detector of Fase 3 — comparing two snapshots surfaces size deltas,
   god-node churn, movement in the confidence distribution, and persisted
   rule-based drift signals in `gpc_drift_signals`.
-- **Observability** — `gpc.mcp_usage`. Surfaces the server's own call log
+- **Observability** — `gpc_mcp_usage`. Surfaces the server's own call log
   (every tool call writes one row to `gpc_mcp_calls`) so operators can
   confirm that AI clients are actually hitting the server.
 

@@ -51,9 +51,9 @@ Every MCP tool invocation is logged to `gpc_mcp_calls` by `@log_mcp_call` in
 Token economy samples are additionally written to `gpc_token_savings_samples`
 when one of these tools returns successfully:
 
-- `gpc.search`
-- `gpc.context`
-- `gpc.estimate_token_savings`
+- `gpc_search`
+- `gpc_context`
+- `gpc_estimate_token_savings`
 
 The sample stores counts only: project, optional repo, query, indexed tokens,
 retrieved tokens, saved tokens, savings percentage, returned character count
@@ -72,7 +72,7 @@ gpc migrate up
 ```
 
 Samples are not retroactive. The dashboard starts filling after new MCP calls
-hit `gpc.search`, `gpc.context` or `gpc.estimate_token_savings`.
+hit `gpc_search`, `gpc_context` or `gpc_estimate_token_savings`.
 
 ## Retention
 

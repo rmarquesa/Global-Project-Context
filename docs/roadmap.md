@@ -45,7 +45,7 @@ topologia (quem toca quem) além das de semântica (o que parece com isso).
       `project_slug`, filtram por `min_confidence` e restringem traversal a
       `GRAPHIFY_RELATION | CROSS_REPO_BRIDGE` (plumbing como `HAS_REPO` /
       `OWNS_REPO` não vaza).
-- [x] MCP tools `gpc.graph_neighbors`, `gpc.graph_summary`, `gpc.graph_path`
+- [x] MCP tools `gpc_graph_neighbors`, `gpc_graph_summary`, `gpc_graph_path`
       em [gpc/mcp_server.py](../gpc/mcp_server.py).
 - [x] Default `min_confidence="EXTRACTED"` — `INFERRED` (ex.: bridges
       cross-repo) e `AMBIGUOUS` só aparecem com opt-in explícito. Cada aresta
@@ -61,8 +61,8 @@ topologia (quem toca quem) além das de semântica (o que parece com isso).
       e [README.md](../README.md) atualizados.
 
 Expansões naturais que ficam na Fase 2:
-- [x] `gpc.graph_community` — entregue em 2026-04-24.
-- [x] `gpc.graph_diff` — entregue em 2026-04-24 junto com a coleta
+- [x] `gpc_graph_community` — entregue em 2026-04-24.
+- [x] `gpc_graph_diff` — entregue em 2026-04-24 junto com a coleta
       longitudinal `gpc_self_metrics` (Fase 3.1).
 - [ ] Parâmetro `relations` aceitar regex ou incluir relações GPC-side
       (`OWNS_ENTITY`, `GPC_RELATION`) na camada `graph_neighbors`.
@@ -77,7 +77,7 @@ Expansões naturais que ficam na Fase 2:
 - [x] [gpc/mcp_observability.py](../gpc/mcp_observability.py) define o
       decorator `@log_mcp_call` que envolve cada tool. Nunca levanta: se o
       Postgres estiver indisponível, loga em stderr e libera a resposta.
-- [x] Todos os 13 tools decorados. Novo tool `gpc.mcp_usage(window_hours)`
+- [x] Todos os 13 tools decorados. Novo tool `gpc_mcp_usage(window_hours)`
       agrega o log em totais / por tool / por client / por projeto.
 - [x] Smoke test [tests/smoke/mcp_observability_smoke_test.py](../tests/smoke/mcp_observability_smoke_test.py)
       valida que tools deixam rastro auditável e se limpa depois.
@@ -92,7 +92,7 @@ vira dashboard operacional.
 
 - [x] Migration `0008_token_savings_samples.sql` cria
       `gpc_token_savings_samples`, preenchida automaticamente por
-      `gpc.search`, `gpc.context` e `gpc.estimate_token_savings`.
+      `gpc_search`, `gpc_context` e `gpc_estimate_token_savings`.
 - [x] `docker-compose.yaml` ganha serviço `grafana` no profile
       `observability`, com datasource Postgres e dashboard versionado em
       `observability/grafana/`.
@@ -158,10 +158,10 @@ diff. Detectores de drift herdam disso depois.
       grava snapshot, `source` identifica o trigger.
 - [x] CLI `gpc metrics collect --project X [--json]` e `gpc metrics list
       [--project X]`.
-- [x] `gpc.graph_diff` — diff entre dois snapshots. Retorna
+- [x] `gpc_graph_diff` — diff entre dois snapshots. Retorna
       `numeric_deltas`, `god_nodes_diff` (entered/exited/stable) e
       `confidence_shift` (antes/depois em % + delta em pp).
-- [x] `gpc.self_metrics` — lista ou coleta via MCP (opt-in via
+- [x] `gpc_self_metrics` — lista ou coleta via MCP (opt-in via
       `collect=true`).
 - [x] Smoke test [tests/smoke/self_metrics_smoke_test.py](../tests/smoke/self_metrics_smoke_test.py)
       valida collect + diff.
@@ -171,7 +171,7 @@ diff. Detectores de drift herdam disso depois.
 Próximos passos naturais em cima disto (continuam Fase 3):
 - [x] Detector de drift — entregue em 2026-04-26 com migration
       `0009_drift_signals.sql`, módulo [gpc/drift.py](../gpc/drift.py),
-      CLI `gpc metrics drift/signals` e MCP `gpc.drift_signals`.
+      CLI `gpc metrics drift/signals` e MCP `gpc_drift_signals`.
 - [ ] Job cron semanal que roda `gpc metrics collect` para cada projeto
       (já que hooks só disparam quando há write; projetos parados
       ficariam sem snapshots novos).
@@ -186,7 +186,7 @@ escritas via CLI/hooks.
       (genéricos). No alugafacil, `fetch()` sai do topo de centrais e vira
       utility; `passport.js`/`resolveSecret()`/`crypto.js` ficam como hubs
       reais.
-- [x] Novo tool `gpc.graph_community(project, community_id)` expõe membros,
+- [x] Novo tool `gpc_graph_community(project, community_id)` expõe membros,
       repos envolvidos e bridges externos de uma community. Permite
       navegação após `graph_summary`.
 - [x] Regra `content_hash` em `build_bridges` via join com
@@ -199,7 +199,7 @@ escritas via CLI/hooks.
       workers Cloudflare compartilham código por cópia, não import).
 - [x] [gpc/graph.py](../gpc/graph.py): `GPCEntity` agora fica ligado a
       `(:GPCRepo)-[:OWNS_ENTITY]->(:GPCEntity)` também, não só ao projeto.
-- [x] Hybrid retrieval em `gpc.context(include_graph=true)`: anexa footer
+- [x] Hybrid retrieval em `gpc_context(include_graph=true)`: anexa footer
       com vizinhos Graphify de cada chunk, com `confidence` tagged.
       Default `graph_min_confidence="EXTRACTED"`; INFERRED é opt-in.
 - [x] Smoke test
@@ -211,10 +211,10 @@ escritas via CLI/hooks.
 
 **Objetivo.** Dar ao modelo acesso a perguntas estruturais que o retrieval
 semântico não resolve: "quem depende de X", "caminho mais curto entre A e B",
-"god nodes deste projeto". Sem borrar a promessa atual do `gpc.search` /
-`gpc.context`.
+"god nodes deste projeto". Sem borrar a promessa atual do `gpc_search` /
+`gpc_context`.
 
-### 1.1 `gpc.graph_neighbors`
+### 1.1 `gpc_graph_neighbors`
 
 Retorna vizinhos de um nó no grafo Graphify, filtrados por relação e
 confidence. Opt-in — o cliente pede explicitamente.
@@ -227,7 +227,7 @@ confidence. Opt-in — o cliente pede explicitamente.
   `gpc/graph_query.py` usando `neo4j_driver()` de
   [gpc/graph.py](../gpc/graph.py#L34).
 
-### 1.2 `gpc.graph_summary`
+### 1.2 `gpc_graph_summary`
 
 Retorna god nodes, communities e cohesion de um projeto — o essencial do
 `GRAPH_REPORT.md` em forma estruturada.
@@ -238,7 +238,7 @@ Retorna god nodes, communities e cohesion de um projeto — o essencial do
 - Arquivos: mesmo trio acima; reaproveitar `gpc/token_economy.py` para
   estimativa de custo.
 
-### 1.3 `gpc.graph_path`
+### 1.3 `gpc_graph_path`
 
 Shortest path entre dois símbolos (labels ou IDs).
 
@@ -275,11 +275,11 @@ zerar infraestrutura e recomeçar.
       `gpc init --project <slug> --repo <slug>` para anexar um diretório como
       repo de um projeto existente.
 - [x] Indexer preenche `repo_id` em files/chunks e `repo_slug` no payload
-      Qdrant (usado pelos filtros de `gpc.search` e `gpc.context`).
+      Qdrant (usado pelos filtros de `gpc_search` e `gpc_context`).
 - [x] Projeção Neo4j agora inclui `(:GPCProject)-[:OWNS_REPO]->(:GPCRepo)`
       em [gpc/graph.py](../gpc/graph.py).
-- [x] MCP ganha `gpc.list_repos`, `gpc.resolve_repo`, e parâmetro `repo` em
-      `gpc.search` / `gpc.context`. `gpc.list_projects` já retorna os repos
+- [x] MCP ganha `gpc_list_repos`, `gpc_resolve_repo`, e parâmetro `repo` em
+      `gpc_search` / `gpc_context`. `gpc_list_projects` já retorna os repos
       de cada projeto para evitar round-trip extra.
 - [x] Reset controlado: `gpc graph-reset --yes [--project] [--rebuild]`
       só zera Neo4j; `gpc reset --yes` é nuclear (Postgres drop + migrate,
@@ -334,12 +334,12 @@ mistura muitos repos pequenos sob um `project_slug` comum.
 Rodar, em ordem, para cada novo projeto antes de declarar "indexado":
 
 - [ ] `gpc init . --slug <slug> --name "<Name>"`
-- [ ] `gpc-index` completo + `gpc.index_status` verde
+- [ ] `gpc-index` completo + `gpc_index_status` verde
 - [ ] `graphify update .` + confirmar `GRAPH_REPORT.md` não-vazio
 - [ ] Post-commit hook Graphify → Neo4j instalado
   ([examples/hooks/graphify-neo4j-post-commit.sh](../examples/hooks/graphify-neo4j-post-commit.sh))
-- [ ] `gpc.search` retorna chunks coerentes para 3 perguntas representativas
-- [ ] `gpc.graph_summary` (Fase 1) lista god nodes que fazem sentido para um
+- [ ] `gpc_search` retorna chunks coerentes para 3 perguntas representativas
+- [ ] `gpc_graph_summary` (Fase 1) lista god nodes que fazem sentido para um
   humano do projeto
 
 ### 2.2 Consolidação Cloudflare workers
@@ -350,7 +350,7 @@ cross-repo ([docs/graphify.md:50-52](graphify.md#L50-L52)).
 - [ ] Escolher `project_slug` comum (ex. `cf-backend`) e `repo_slug` por worker.
 - [ ] Validar que nós Graphify usam IDs estáveis
   `<project_slug>:<repo_slug>:<graphify_node_id>`.
-- [ ] Rodar `gpc.graph_path` entre dois workers que compartilham um contrato
+- [ ] Rodar `gpc_graph_path` entre dois workers que compartilham um contrato
   — resultado esperado: caminho curto passando pelo símbolo compartilhado.
 - [ ] Medir freshness lag: tempo entre commit num worker e Neo4j refletindo.
 
@@ -359,7 +359,7 @@ cross-repo ([docs/graphify.md:50-52](graphify.md#L50-L52)).
 Depois de indexar backend/frontend/database, rodar uma passagem de análise
 com o próprio GPC (dogfooding):
 
-- [ ] `gpc.graph_summary` em cada projeto — registrar god nodes e communities.
+- [ ] `gpc_graph_summary` em cada projeto — registrar god nodes e communities.
 - [ ] Comparar convenções: naming, estrutura de config, modelo de embeddings
   (todos devem usar `nomic-embed-text:latest` —
   [AGENTS.md:19](../AGENTS.md#L19)).
@@ -413,7 +413,7 @@ e emitir sinais — nunca ações:
 
 Implementação: job offline em [gpc/drift.py](../gpc/drift.py), grava
 `gpc_drift_signals`. Exposto via `gpc metrics drift`, `gpc metrics signals`
-e `gpc.drift_signals(project)` (tool MCP opt-in).
+e `gpc_drift_signals(project)` (tool MCP opt-in).
 
 ### 3.3 Loop de auto-proposição (humano-no-loop)
 
@@ -464,7 +464,7 @@ para `gpc/` passa por PR humano com `tests/smoke/` verde.
 Coisas que já foram consideradas e conscientemente adiadas. Não são "TODO",
 são "não agora":
 
-- MCP chamando Neo4j no hot path de `gpc.search` / `gpc.context` — mantém a
+- MCP chamando Neo4j no hot path de `gpc_search` / `gpc_context` — mantém a
   promessa de previsibilidade e read-model descartável.
 - Treino de modelo próprio ([architecture_rationale](architecture.md#L23)
   explica).

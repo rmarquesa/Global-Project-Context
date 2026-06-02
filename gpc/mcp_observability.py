@@ -57,7 +57,7 @@ SENSITIVE_KEY_PARTS = (
     "refresh_token",
     "auth_token",
 )
-TOKEN_SAVINGS_TOOLS = {"gpc.search", "gpc.context", "gpc.estimate_token_savings"}
+TOKEN_SAVINGS_TOOLS = {"gpc_search", "gpc_context", "gpc_estimate_token_savings"}
 
 
 def redact_sensitive(value: Any) -> Any:
@@ -357,9 +357,9 @@ def _repo_slug(args: dict[str, Any], result: Any) -> str | None:
 
 
 def _result_text_for_tokens(tool: str, result: dict[str, Any]) -> str:
-    if tool == "gpc.context" and isinstance(result.get("context"), str):
+    if tool == "gpc_context" and isinstance(result.get("context"), str):
         return result["context"]
-    if tool == "gpc.search" and isinstance(result.get("results"), list):
+    if tool == "gpc_search" and isinstance(result.get("results"), list):
         parts = [
             item.get("content", "")
             for item in result["results"]

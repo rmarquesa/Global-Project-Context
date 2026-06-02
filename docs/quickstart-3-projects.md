@@ -90,12 +90,12 @@ Once the projects are indexed and `gpc install-clients` has registered the
 server, ask the client to call GPC:
 
 ```text
-Use the gpc MCP server. Call gpc.context with project=my-web and
+Use the gpc MCP server. Call gpc_context with project=my-web and
 query="the login flow".
 ```
 
 ```text
-Use gpc.context with cwd=~/Projects/my-api and query="how is the user
+Use gpc_context with cwd=~/Projects/my-api and query="how is the user
 validated?".
 ```
 

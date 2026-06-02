@@ -14,7 +14,7 @@ graph locally. This test asserts:
 
 The test runs the projection step itself (``sync_graphify_to_neo4j``) before
 querying so it is reproducible regardless of when the post-commit hook last
-ran. The MCP tool ``gpc.graph_summary`` is a thin wrapper around the same
+ran. The MCP tool ``gpc_graph_summary`` is a thin wrapper around the same
 ``graph_summary`` function — calling the function directly is equivalent.
 """
 

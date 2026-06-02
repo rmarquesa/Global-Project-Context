@@ -1,7 +1,7 @@
 """Structural queries on the Neo4j graph.
 
-These functions power the ``gpc.graph_neighbors``, ``gpc.graph_summary`` and
-``gpc.graph_path`` MCP tools. They are intentionally thin wrappers around
+These functions power the ``gpc_graph_neighbors``, ``gpc_graph_summary`` and
+``gpc_graph_path`` MCP tools. They are intentionally thin wrappers around
 Cypher so that every result is explicit about:
 
 * which project it belongs to (``project_slug`` scope is mandatory);

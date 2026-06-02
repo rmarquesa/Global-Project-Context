@@ -13,23 +13,23 @@ The server exposes seventeen read-only tools.
 
 | Tool | Purpose | Key inputs |
 |---|---|---|
-| `gpc.health` | Reports whether Postgres, Qdrant, Ollama and the embedding model are reachable. | — |
-| `gpc.resolve_project` | Resolves a project by `cwd` or slug; returns identity, root and aliases. | `cwd`, `project` |
-| `gpc.resolve_repo` | Resolves a `(project, repo)` tuple. Use this inside a multi-repo project so subsequent `search`/`context` calls can scope by repo. | `cwd`, `project`, `repo` |
-| `gpc.list_projects` | Lists registered projects with their repos and aliases. | — |
-| `gpc.list_repos` | Lists repositories under a project. | `project`, `cwd` |
-| `gpc.index_status` | Returns indexed file count, chunk count, Qdrant point count and recent run summaries. | `cwd`, `project`, `runs` |
-| `gpc.search` | Returns ranked chunk hits for a semantic query, hydrated from Postgres. Pass `repo` to filter. | `query`, `cwd`/`project`, `limit`, `content_chars`, `repo` |
-| `gpc.context` | Returns one bounded context block ready to inject into a prompt. Pass `repo` to filter; set `include_graph=true` for hybrid retrieval (each chunk gets a footer with neighbours + confidence from Neo4j). | `query`, `cwd`/`project`, `max_chunks`, `max_chars`, `repo`, `include_graph`, `graph_min_confidence` |
-| `gpc.estimate_token_savings` | Reports `indexed_tokens`, `retrieved_tokens` and the estimated saving for a query. | `query`, `cwd`/`project` |
-| `gpc.graph_neighbors` | Neighbours of a node in the Neo4j projection, with typed relations and confidence. Answers "who uses X?". | `node`, `cwd`/`project`, `depth`, `min_confidence`, `relations`, `limit` |
-| `gpc.graph_summary` | God nodes, repo breakdown, cross-repo bridges and communities. The structured equivalent of `GRAPH_REPORT.md`. | `cwd`/`project`, `top_k_gods`, `include_cohesion` |
-| `gpc.graph_path` | Shortest path between two nodes in the Neo4j projection. Each hop carries relation + confidence. | `a`, `b`, `cwd`/`project`, `max_hops`, `min_confidence` |
-| `gpc.graph_community` | Members, repos and external bridges of one community. Run after `graph_summary` to drill into a cluster. | `community_id`, `cwd`/`project`, `top_members`, `top_external_bridges` |
-| `gpc.self_metrics` | List recent ``gpc_self_metrics`` snapshots for a project; optionally collect a fresh one first. | `cwd`/`project`, `limit`, `collect`, `source` |
-| `gpc.graph_diff` | Diff two metric snapshots: numeric deltas, god-node churn, confidence-distribution shift. | `cwd`/`project`, `window_hours`, `from_id`, `to_id` |
-| `gpc.drift_signals` | List stored drift signals; optionally detect and persist fresh rule-based signals from the latest metric snapshots. | `cwd`/`project`, `window_hours`, `detect`, `persist`, `limit` |
-| `gpc.mcp_usage` | Aggregates the server's own call log. Use it to confirm AI clients are actually hitting GPC. | `window_hours`, `cwd`/`project` |
+| `gpc_health` | Reports whether Postgres, Qdrant, Ollama and the embedding model are reachable. | — |
+| `gpc_resolve_project` | Resolves a project by `cwd` or slug; returns identity, root and aliases. | `cwd`, `project` |
+| `gpc_resolve_repo` | Resolves a `(project, repo)` tuple. Use this inside a multi-repo project so subsequent `search`/`context` calls can scope by repo. | `cwd`, `project`, `repo` |
+| `gpc_list_projects` | Lists registered projects with their repos and aliases. | — |
+| `gpc_list_repos` | Lists repositories under a project. | `project`, `cwd` |
+| `gpc_index_status` | Returns indexed file count, chunk count, Qdrant point count and recent run summaries. | `cwd`, `project`, `runs` |
+| `gpc_search` | Returns ranked chunk hits for a semantic query, hydrated from Postgres. Pass `repo` to filter. | `query`, `cwd`/`project`, `limit`, `content_chars`, `repo` |
+| `gpc_context` | Returns one bounded context block ready to inject into a prompt. Pass `repo` to filter; set `include_graph=true` for hybrid retrieval (each chunk gets a footer with neighbours + confidence from Neo4j). | `query`, `cwd`/`project`, `max_chunks`, `max_chars`, `repo`, `include_graph`, `graph_min_confidence` |
+| `gpc_estimate_token_savings` | Reports `indexed_tokens`, `retrieved_tokens` and the estimated saving for a query. | `query`, `cwd`/`project` |
+| `gpc_graph_neighbors` | Neighbours of a node in the Neo4j projection, with typed relations and confidence. Answers "who uses X?". | `node`, `cwd`/`project`, `depth`, `min_confidence`, `relations`, `limit` |
+| `gpc_graph_summary` | God nodes, repo breakdown, cross-repo bridges and communities. The structured equivalent of `GRAPH_REPORT.md`. | `cwd`/`project`, `top_k_gods`, `include_cohesion` |
+| `gpc_graph_path` | Shortest path between two nodes in the Neo4j projection. Each hop carries relation + confidence. | `a`, `b`, `cwd`/`project`, `max_hops`, `min_confidence` |
+| `gpc_graph_community` | Members, repos and external bridges of one community. Run after `graph_summary` to drill into a cluster. | `community_id`, `cwd`/`project`, `top_members`, `top_external_bridges` |
+| `gpc_self_metrics` | List recent ``gpc_self_metrics`` snapshots for a project; optionally collect a fresh one first. | `cwd`/`project`, `limit`, `collect`, `source` |
+| `gpc_graph_diff` | Diff two metric snapshots: numeric deltas, god-node churn, confidence-distribution shift. | `cwd`/`project`, `window_hours`, `from_id`, `to_id` |
+| `gpc_drift_signals` | List stored drift signals; optionally detect and persist fresh rule-based signals from the latest metric snapshots. | `cwd`/`project`, `window_hours`, `detect`, `persist`, `limit` |
+| `gpc_mcp_usage` | Aggregates the server's own call log. Use it to confirm AI clients are actually hitting GPC. | `window_hours`, `cwd`/`project` |
 
 **Project resolution**. Every tool accepts either `project` (a registered slug
 or alias) or `cwd` (the active repository path). Pass `project` when you
@@ -40,15 +40,15 @@ finally to its own working directory.
 **Repo scoping**. A single project can own multiple repositories (e.g.
 `alugafacil` owns `workers-gateway`, `workers-users`, `web`). Pass a single
 slug (`repo: "workers-gateway"`) or a list (`repo: ["workers-gateway", "workers-users"]`)
-to `gpc.search` and `gpc.context` to keep retrieval scoped. When the client
+to `gpc_search` and `gpc_context` to keep retrieval scoped. When the client
 is already inside a repo directory, `cwd` resolution picks the correct repo
 automatically — no explicit `repo` needed.
 
-**Bounded retrieval**. `gpc.context` enforces `max_chunks` and `max_chars` so
-the returned block fits inside an AI prompt. Use `gpc.search` when you want
+**Bounded retrieval**. `gpc_context` enforces `max_chunks` and `max_chars` so
+the returned block fits inside an AI prompt. Use `gpc_search` when you want
 the raw matches with relevance scores instead.
 
-**Semantic vs. structural**. `gpc.search` / `gpc.context` answer "what looks
+**Semantic vs. structural**. `gpc_search` / `gpc_context` answer "what looks
 like this?" — they return text chunks ranked by embedding similarity. The
 `gpc.graph_*` tools answer "what connects to this?" — they read the Neo4j
 projection and return nodes and typed edges (calls, imports, cross-repo
@@ -73,13 +73,13 @@ Every tool call logs one row to the `gpc_mcp_calls` table (see migration
 (slugs, counts, query strings — no raw chunk content) and every field in
 the result is reduced to a small metadata blob.
 
-Use `gpc.mcp_usage` to see the aggregate without opening a SQL client:
+Use `gpc_mcp_usage` to see the aggregate without opening a SQL client:
 
 ```json
 {
   "window_hours": 24,
   "totals": { "total": 147, "ok": 145, "failed": 2, "distinct_clients": 2 },
-  "by_tool":   [ { "tool": "gpc.search",  "calls": 63, "errors": 0, "avg_ms": 480 } ],
+  "by_tool":   [ { "tool": "gpc_search",  "calls": 63, "errors": 0, "avg_ms": 480 } ],
   "by_client": [ { "client": "claude",    "calls": 110 } ],
   "by_project":[ { "project": "alugafacil","calls": 120 } ]
 }
@@ -210,17 +210,17 @@ docker compose --profile http up -d gpc-mcp-http
 Tell the client to call the GPC MCP server:
 
 ```text
-Use the gpc MCP server. Call gpc.context with project=gpc and
+Use the gpc MCP server. Call gpc_context with project=gpc and
 query="how does the indexer detect secret-like content?".
 ```
 
 ```text
-Use gpc.search with cwd=/path/to/repo and query="who calls the auth middleware?".
+Use gpc_search with cwd=/path/to/repo and query="who calls the auth middleware?".
 Return the top 5 chunks.
 ```
 
 ```text
-Use gpc.estimate_token_savings with project=gpc and the same query as above
+Use gpc_estimate_token_savings with project=gpc and the same query as above
 to show how much context would otherwise have been sent.
 ```
 
@@ -254,7 +254,7 @@ installing the `psycopg` wheel that bundles `libpq`:
 `./venv/bin/pip install -r requirements.txt` gets this right out of the
 box. After installing, restart the client so it respawns the server.
 
-### `gpc.context` returns empty results
+### `gpc_context` returns empty results
 
 1. Run `gpc-status --project <slug>` to confirm the project has indexed
    chunks. A fresh project that has never been indexed returns nothing.
@@ -263,7 +263,7 @@ box. After installing, restart the client so it respawns the server.
    coverage or query phrasing rather than MCP transport.
 3. Confirm Ollama is reachable: `curl http://localhost:11434/api/tags`.
 
-### `gpc.health` reports a failing service
+### `gpc_health` reports a failing service
 
 | Failure | Likely cause | Fix |
 |---|---|---|
@@ -286,4 +286,4 @@ box. After installing, restart the client so it respawns the server.
 
 - [Architecture](architecture.md) — what the MCP server is talking to.
 - [Operations](operations.md) — install, validate, reset, index.
-- [Token economy](token-economy.md) — interpreting `gpc.estimate_token_savings`.
+- [Token economy](token-economy.md) — interpreting `gpc_estimate_token_savings`.

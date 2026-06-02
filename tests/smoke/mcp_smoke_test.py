@@ -26,29 +26,29 @@ async def main() -> None:
             tools = await session.list_tools()
             names = sorted(tool.name for tool in tools.tools)
             expected = {
-                "gpc.health",
-                "gpc.resolve_project",
-                "gpc.resolve_repo",
-                "gpc.list_projects",
-                "gpc.list_repos",
-                "gpc.index_status",
-                "gpc.search",
-                "gpc.context",
-                "gpc.estimate_token_savings",
-                "gpc.graph_neighbors",
-                "gpc.graph_summary",
-                "gpc.graph_path",
-                "gpc.graph_community",
-                "gpc.graph_diff",
-                "gpc.drift_signals",
-                "gpc.self_metrics",
-                "gpc.mcp_usage",
+                "gpc_health",
+                "gpc_resolve_project",
+                "gpc_resolve_repo",
+                "gpc_list_projects",
+                "gpc_list_repos",
+                "gpc_index_status",
+                "gpc_search",
+                "gpc_context",
+                "gpc_estimate_token_savings",
+                "gpc_graph_neighbors",
+                "gpc_graph_summary",
+                "gpc_graph_path",
+                "gpc_graph_community",
+                "gpc_graph_diff",
+                "gpc_drift_signals",
+                "gpc_self_metrics",
+                "gpc_mcp_usage",
             }
             missing = sorted(expected - set(names))
             if missing:
                 raise SystemExit(f"Missing MCP tools: {missing}")
 
-            health = await session.call_tool("gpc.health", {})
+            health = await session.call_tool("gpc_health", {})
             health_payload = _json_payload(health)
             if not health_payload.get("ok"):
                 raise SystemExit(f"Health check failed: {health_payload}")
@@ -58,7 +58,7 @@ async def main() -> None:
             # were never indexed. Explicit ``project`` wins over cwd per
             # the documented priority order, so we can rely on the slug
             # alone without having to thread a fake cwd through every call.
-            projects = await session.call_tool("gpc.list_projects", {})
+            projects = await session.call_tool("gpc_list_projects", {})
             projects_payload = _json_payload(projects)
             registered = [p for p in projects_payload.get("projects", [])]
             if not registered:
@@ -72,7 +72,7 @@ async def main() -> None:
                 if not repos:
                     continue
                 status = await session.call_tool(
-                    "gpc.index_status",
+                    "gpc_index_status",
                     {"project": slug, "runs": 1},
                 )
                 status_payload = _json_payload(status)
@@ -88,7 +88,7 @@ async def main() -> None:
                 )
 
             resolved = await session.call_tool(
-                "gpc.resolve_project",
+                "gpc_resolve_project",
                 {"project": probe_slug},
             )
             resolved_payload = _json_payload(resolved)
@@ -108,7 +108,7 @@ async def main() -> None:
             )
             if other_project:
                 conflict = await session.call_tool(
-                    "gpc.resolve_project",
+                    "gpc_resolve_project",
                     {"project": probe_slug, "cwd": str(ROOT)},
                 )
                 conflict_payload = _json_payload(conflict)
@@ -121,7 +121,7 @@ async def main() -> None:
                     )
 
             repos = await session.call_tool(
-                "gpc.list_repos",
+                "gpc_list_repos",
                 {"project": probe_slug},
             )
             repos_payload = _json_payload(repos)
@@ -129,7 +129,7 @@ async def main() -> None:
                 raise SystemExit(f"list_repos returned no repos: {repos_payload}")
 
             resolved_repo = await session.call_tool(
-                "gpc.resolve_repo",
+                "gpc_resolve_repo",
                 {"project": probe_slug},
             )
             resolved_repo_payload = _json_payload(resolved_repo)
@@ -137,7 +137,7 @@ async def main() -> None:
                 raise SystemExit(f"resolve_repo failed: {resolved_repo_payload}")
 
             status = await session.call_tool(
-                "gpc.index_status",
+                "gpc_index_status",
                 {"project": probe_slug, "runs": 1},
             )
             status_payload = _json_payload(status)
@@ -145,7 +145,7 @@ async def main() -> None:
                 raise SystemExit(f"Index status did not return chunks: {status_payload}")
 
             search = await session.call_tool(
-                "gpc.search",
+                "gpc_search",
                 {
                     "project": probe_slug,
                     "query": "authentication",
@@ -158,7 +158,7 @@ async def main() -> None:
                 raise SystemExit(f"Search did not return results: {search_payload}")
 
             context = await session.call_tool(
-                "gpc.context",
+                "gpc_context",
                 {
                     "project": probe_slug,
                     "query": "authentication",
@@ -171,7 +171,7 @@ async def main() -> None:
                 raise SystemExit(f"Context did not return text: {context_payload}")
 
             estimate = await session.call_tool(
-                "gpc.estimate_token_savings",
+                "gpc_estimate_token_savings",
                 {
                     "project": probe_slug,
                     "query": "authentication",
@@ -186,7 +186,7 @@ async def main() -> None:
             # graph tools: shape check only — don't assume any particular
             # project has a Graphify projection in every environment.
             summary = await session.call_tool(
-                "gpc.graph_summary",
+                "gpc_graph_summary",
                 {"project": probe_slug, "top_k_gods": 3, "include_cohesion": False},
             )
             summary_payload = _json_payload(summary)
@@ -194,7 +194,7 @@ async def main() -> None:
                 raise SystemExit(f"graph_summary failed: {summary_payload}")
 
             neighbors = await session.call_tool(
-                "gpc.graph_neighbors",
+                "gpc_graph_neighbors",
                 {
                     "project": probe_slug,
                     "node": "main",
@@ -208,7 +208,7 @@ async def main() -> None:
                 raise SystemExit(f"graph_neighbors failed: {neighbors_payload}")
 
             path_result = await session.call_tool(
-                "gpc.graph_path",
+                "gpc_graph_path",
                 {
                     "project": probe_slug,
                     "a": "main",
@@ -222,7 +222,7 @@ async def main() -> None:
                 raise SystemExit(f"graph_path failed: {path_payload}")
 
             usage = await session.call_tool(
-                "gpc.mcp_usage",
+                "gpc_mcp_usage",
                 {"window_hours": 1},
             )
             usage_payload = _json_payload(usage)
