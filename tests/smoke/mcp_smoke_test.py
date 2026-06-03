@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from pathlib import Path
 import sys
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
-
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -19,6 +19,10 @@ async def main() -> None:
         command=sys.executable,
         args=[str(ROOT / "gpc_mcp_server.py")],
         cwd=ROOT,
+        # The stdio client does not pass the parent environment by default, so
+        # the spawned server would miss GPC_* config (e.g. the CI database DSN)
+        # and fall back to defaults. Forward the current environment.
+        env=os.environ.copy(),
     )
 
     async with stdio_client(server) as (read, write):
@@ -64,10 +68,11 @@ async def main() -> None:
             projects_payload = _json_payload(projects)
             registered = [p for p in projects_payload.get("projects", [])]
             if not registered:
-                raise SystemExit("No projects registered — cannot smoke-test MCP tools.")
+                raise SystemExit(
+                    "No projects registered — cannot smoke-test MCP tools."
+                )
 
             probe_slug = None
-            probe_cwd = None
             for candidate in registered:
                 slug = candidate.get("slug")
                 repos = candidate.get("repos") or []
@@ -80,9 +85,6 @@ async def main() -> None:
                 status_payload = _json_payload(status)
                 if status_payload.get("status", {}).get("chunks", 0) >= 1:
                     probe_slug = slug
-                    # Keep a real cwd handy for the `resolve_repo` probe
-                    # that validates repo-level resolution end-to-end.
-                    probe_cwd = repos[0].get("root_path")
                     break
             if not probe_slug:
                 raise SystemExit(
@@ -144,7 +146,9 @@ async def main() -> None:
             )
             status_payload = _json_payload(status)
             if status_payload.get("status", {}).get("chunks", 0) < 1:
-                raise SystemExit(f"Index status did not return chunks: {status_payload}")
+                raise SystemExit(
+                    f"Index status did not return chunks: {status_payload}"
+                )
 
             search = await session.call_tool(
                 "gpc_search",
