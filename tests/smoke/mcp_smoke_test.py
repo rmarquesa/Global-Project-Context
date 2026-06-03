@@ -14,7 +14,9 @@ ROOT = Path(__file__).resolve().parents[2]
 
 async def main() -> None:
     server = StdioServerParameters(
-        command=str(ROOT / "venv" / "bin" / "python"),
+        # Use the interpreter running this test (the project venv locally, the
+        # setup-python interpreter in CI) rather than a hardcoded venv path.
+        command=sys.executable,
         args=[str(ROOT / "gpc_mcp_server.py")],
         cwd=ROOT,
     )
