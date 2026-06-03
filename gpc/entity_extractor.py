@@ -24,12 +24,10 @@ from pathlib import Path, PurePosixPath
 import re
 from typing import Any
 
-import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
-from gpc.config import POSTGRES_DSN
-
+from gpc.db import pg_connection
 
 # One pattern per ecosystem. Keep them narrow to avoid false positives.
 IMPORT_PATTERNS: dict[str, list[re.Pattern[str]]] = {
@@ -73,7 +71,7 @@ def extract_for_project(project_id: str, project_slug: str) -> dict[str, int]:
 
     stats = {"entities_upserted": 0, "relations_upserted": 0, "imports_parsed": 0}
 
-    with psycopg.connect(POSTGRES_DSN, row_factory=dict_row) as conn:
+    with pg_connection(row_factory=dict_row) as conn:
         files = conn.execute(
             """
             select f.id::text as id,
@@ -284,7 +282,9 @@ def _resolve_js(
 
     # Try each plausible extension / index file, in order.
     by_path: dict[str, dict[str, Any]] = {
-        f["relative_path"]: f for f in files if f.get("repo_slug") == source_file.get("repo_slug")
+        f["relative_path"]: f
+        for f in files
+        if f.get("repo_slug") == source_file.get("repo_slug")
     }
 
     # Exact match first.
@@ -313,7 +313,9 @@ def _resolve_python(
     # matching __init__.py inside the current repo only (imports across
     # repos happen but resolving them heuristically is low-signal).
     by_path: dict[str, dict[str, Any]] = {
-        f["relative_path"]: f for f in files if f.get("repo_slug") == source_file.get("repo_slug")
+        f["relative_path"]: f
+        for f in files
+        if f.get("repo_slug") == source_file.get("repo_slug")
     }
     candidate = "/".join(target_spec.split("."))
     direct = f"{candidate}.py"

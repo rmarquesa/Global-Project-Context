@@ -613,6 +613,8 @@ def mcp_usage(
             "first_call": str(totals_row[4]) if totals_row and totals_row[4] else None,
             "last_call": str(totals_row[5]) if totals_row and totals_row[5] else None,
         }
+        from gpc.embeddings import cache_stats
+
         return {
             "ok": True,
             "window_hours": safe_window,
@@ -624,6 +626,9 @@ def mcp_usage(
             ],
             "by_client": [{"client": row[0], "calls": row[1]} for row in by_client],
             "by_project": [{"project": row[0], "calls": row[1]} for row in by_project],
+            # Live (process-local) per-query embedding cache stats for the
+            # running server, not historical DB aggregates.
+            "embedding_cache": cache_stats(),
         }
     except Exception as exc:
         return {"ok": False, "error": _error_payload(exc)}

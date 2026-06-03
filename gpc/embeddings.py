@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from functools import lru_cache
 import json
-from typing import Sequence
+from typing import Any, Sequence
 import urllib.error
 import urllib.request
 
@@ -57,6 +57,27 @@ def embed_query(text: str) -> list[float]:
     return list(
         _embed_one_cached(EMBEDDING_PROVIDER, active_embedding_model(), normalized)
     )
+
+
+def cache_stats() -> dict[str, Any]:
+    """Return live per-query embedding-cache stats for the current process.
+
+    Useful for observability: a high hit-rate means repeated queries are being
+    served without re-embedding. Stats are process-local (the cache is in
+    memory), so they reflect the running MCP server, not historical DB logs.
+    """
+
+    info = _embed_one_cached.cache_info()
+    total = info.hits + info.misses
+    hit_rate = round(info.hits / total, 4) if total else 0.0
+    return {
+        "enabled": EMBEDDING_CACHE_SIZE > 0,
+        "hits": info.hits,
+        "misses": info.misses,
+        "hit_rate": hit_rate,
+        "currsize": info.currsize,
+        "maxsize": info.maxsize,
+    }
 
 
 def embed_texts(texts: Sequence[str]) -> EmbeddingBatch:

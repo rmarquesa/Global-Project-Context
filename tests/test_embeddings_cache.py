@@ -49,6 +49,22 @@ def test_embed_query_distinguishes_different_queries(monkeypatch) -> None:
     assert len(calls) == 2
 
 
+def test_cache_stats_reports_hits_and_hit_rate(monkeypatch) -> None:
+    embeddings._embed_one_cached.cache_clear()
+    monkeypatch.setattr(embeddings, "embed_texts", _fake_batch)
+    monkeypatch.setattr(embeddings, "EMBEDDING_CACHE_SIZE", 256)
+
+    embeddings.embed_query("repeat me")
+    embeddings.embed_query("repeat me")  # hit
+    stats = embeddings.cache_stats()
+
+    assert stats["enabled"] is True
+    assert stats["hits"] == 1
+    assert stats["misses"] == 1
+    assert stats["hit_rate"] == 0.5
+    assert stats["currsize"] == 1
+
+
 def test_embed_query_returns_a_fresh_list(monkeypatch) -> None:
     embeddings._embed_one_cached.cache_clear()
     monkeypatch.setattr(embeddings, "embed_texts", _fake_batch)

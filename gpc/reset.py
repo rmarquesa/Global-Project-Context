@@ -12,13 +12,11 @@ audit trail before wiping anything.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Callable
 
 import psycopg
 
-from gpc.config import POSTGRES_DSN, ROOT_DIR
-from gpc.graph import neo4j_driver
+from gpc.db import pg_connection
 from gpc.graph_reset import reset_neo4j
 
 
@@ -54,7 +52,7 @@ def drop_postgres_schema() -> list[str]:
     """Drop every ``gpc_*`` table. Returns the tables that were dropped."""
 
     dropped: list[str] = []
-    with psycopg.connect(POSTGRES_DSN) as conn:
+    with pg_connection() as conn:
         conn.execute("set client_min_messages to warning")
         with conn.cursor() as cur:
             for table in GPC_TABLES:
@@ -80,7 +78,7 @@ def apply_migrations(run_module: Callable[[str, list[str]], int]) -> list[str]:
 
 def _applied_versions() -> list[str]:
     try:
-        with psycopg.connect(POSTGRES_DSN) as conn:
+        with pg_connection() as conn:
             rows = conn.execute(
                 "select version from gpc_schema_migrations order by version"
             ).fetchall()

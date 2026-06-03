@@ -13,16 +13,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
-import psycopg
 from psycopg.rows import dict_row
-from qdrant_client import QdrantClient
 from qdrant_client.models import FieldCondition, Filter, MatchValue
 
-from gpc.config import COLLECTION_NAME, POSTGRES_DSN, QDRANT_HOST, QDRANT_PORT
+from gpc.db import get_qdrant, pg_connection
+from gpc.config import COLLECTION_NAME
 from gpc.registry import normalize_slug
-
 
 MANAGED_HOOK_MARKER = "GPC managed hook"
 HOOK_NAMES = ("post-commit", "post-merge", "post-checkout")
@@ -110,7 +107,7 @@ def _collect_filesystem_roots(slug: str, stats: DeleteStats) -> list[Path]:
     """Return every real (non-virtual) root associated with the project."""
 
     roots: list[Path] = []
-    with psycopg.connect(POSTGRES_DSN, row_factory=dict_row) as conn:
+    with pg_connection(row_factory=dict_row) as conn:
         project = conn.execute(
             "select id::text as id, root_path from gpc_projects where slug = %s",
             (slug,),
@@ -118,7 +115,9 @@ def _collect_filesystem_roots(slug: str, stats: DeleteStats) -> list[Path]:
         if not project:
             return roots
         stats.project_id = project["id"]
-        if project["root_path"] and not str(project["root_path"]).startswith("virtual://"):
+        if project["root_path"] and not str(project["root_path"]).startswith(
+            "virtual://"
+        ):
             roots.append(Path(project["root_path"]))
         repos = conn.execute(
             "select root_path from gpc_repos where project_id = %s",
@@ -146,7 +145,7 @@ def _collect_filesystem_roots(slug: str, stats: DeleteStats) -> list[Path]:
 
 
 def _delete_postgres(slug: str, stats: DeleteStats) -> None:
-    with psycopg.connect(POSTGRES_DSN, row_factory=dict_row) as conn:
+    with pg_connection(row_factory=dict_row) as conn:
         with conn.transaction():
             pid = stats.project_id
             counts = conn.execute(
@@ -175,7 +174,7 @@ def _delete_postgres(slug: str, stats: DeleteStats) -> None:
 
 
 def _delete_qdrant(slug: str, stats: DeleteStats) -> None:
-    client = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT)
+    client = get_qdrant()
     count = client.count(
         collection_name=COLLECTION_NAME,
         count_filter=Filter(

@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+import hashlib
 from pathlib import Path
 import subprocess
 from typing import Iterable
 
-import psycopg
 from psycopg.rows import dict_row
 
-from gpc.config import POSTGRES_DSN
+from gpc.db import pg_connection
 from gpc.indexer import SUPPORTED_EXTENSIONS, SUPPORTED_FILENAMES
 from gpc.registry import resolve_project
 
@@ -98,8 +98,9 @@ def detect_project_staleness(
     resolved = resolve_project(project=project, cwd=cwd)
     root = Path(resolved["root_path"]).expanduser().resolve(strict=False)
     tracked = _git_lines(root, ["ls-files", "--exclude-standard"])
-    present = _git_lines(
-        root, ["ls-files", "--cached", "--others", "--exclude-standard"]
+    present = _filter_present_indexable_files(
+        root,
+        _git_lines(root, ["ls-files", "--cached", "--others", "--exclude-standard"]),
     )
     indexed_info = _indexed_file_info(str(resolved["id"]))
     indexed = list(indexed_info)
@@ -149,23 +150,52 @@ def _status_path(line: str) -> str:
     return path.strip()
 
 
-def _indexed_file_info(project_id: str) -> dict[str, object]:
-    with psycopg.connect(POSTGRES_DSN, row_factory=dict_row) as conn:
+def _indexed_file_info(project_id: str) -> dict[str, dict[str, object]]:
+    with pg_connection(row_factory=dict_row) as conn:
         rows = conn.execute(
-            "select relative_path, indexed_at from gpc_files where project_id = %s",
+            "select relative_path, indexed_at, content_hash from gpc_files where project_id = %s",
             (project_id,),
         ).fetchall()
-    return {row["relative_path"]: row["indexed_at"] for row in rows}
+    return {
+        row["relative_path"]: {
+            "indexed_at": row["indexed_at"],
+            "content_hash": row["content_hash"],
+        }
+        for row in rows
+    }
 
 
-def _modified_after_index(root: Path, indexed_info: dict[str, object]) -> list[str]:
+def _filter_present_indexable_files(root: Path, paths: Iterable[str]) -> list[str]:
+    filtered: list[str] = []
+    for path in paths:
+        if not is_relevant_path(path):
+            continue
+        full_path = root / path
+        if not full_path.is_file():
+            continue
+        if full_path.stat().st_size == 0:
+            continue
+        filtered.append(path)
+    return filtered
+
+
+def _modified_after_index(
+    root: Path, indexed_info: dict[str, dict[str, object]]
+) -> list[str]:
     stale: list[str] = []
-    for relative_path, indexed_at in indexed_info.items():
+    for relative_path, info in indexed_info.items():
         if not is_relevant_path(relative_path):
             continue
         full_path = root / relative_path
         if not full_path.exists():
             continue
+        current_hash = _file_hash(full_path)
+        indexed_hash = info.get("content_hash")
+        if indexed_hash and current_hash:
+            if current_hash != indexed_hash:
+                stale.append(relative_path)
+            continue
+        indexed_at = info.get("indexed_at")
         try:
             indexed_ts = indexed_at.timestamp()  # type: ignore[union-attr]
         except AttributeError:
@@ -173,6 +203,13 @@ def _modified_after_index(root: Path, indexed_info: dict[str, object]) -> list[s
         if full_path.stat().st_mtime > indexed_ts:
             stale.append(relative_path)
     return stale
+
+
+def _file_hash(path: Path) -> str | None:
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return None
 
 
 def _graphify_report_is_stale(root: Path, tracked: Iterable[str]) -> bool:

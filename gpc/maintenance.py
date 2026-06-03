@@ -3,10 +3,9 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from typing import Any
 
-import psycopg
 from psycopg.rows import dict_row
 
-from gpc.config import POSTGRES_DSN
+from gpc.db import pg_connection
 from gpc.registry import resolve_project
 
 
@@ -66,7 +65,7 @@ def diagnose_project_maintenance(
     resolved = resolve_project(project=project, cwd=cwd)
     project_id = str(resolved["id"])
     findings: list[MaintenanceFinding] = []
-    with psycopg.connect(POSTGRES_DSN, row_factory=dict_row) as conn:
+    with pg_connection(row_factory=dict_row) as conn:
         chunks_without_files = conn.execute(
             """
             select count(*) as count

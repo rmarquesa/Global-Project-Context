@@ -2,9 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, asdict
 
-import psycopg
 
-from gpc.config import POSTGRES_DSN
+from gpc.db import pg_connection
 
 
 @dataclass(frozen=True)
@@ -28,7 +27,7 @@ def apply_retention(
     mcp_days = max(1, int(mcp_days))
     token_days = max(1, int(token_days))
 
-    with psycopg.connect(POSTGRES_DSN) as conn:
+    with pg_connection() as conn:
         if dry_run:
             token_count = conn.execute(
                 """
@@ -52,20 +51,26 @@ def apply_retention(
                 token_savings_samples=int(token_count or 0),
             )
 
-        token_deleted = conn.execute(
-            """
+        token_deleted = (
+            conn.execute(
+                """
             delete from gpc_token_savings_samples
             where created_at < now() - (%s::text || ' days')::interval
             """,
-            (str(token_days),),
-        ).rowcount or 0
-        mcp_deleted = conn.execute(
-            """
+                (str(token_days),),
+            ).rowcount
+            or 0
+        )
+        mcp_deleted = (
+            conn.execute(
+                """
             delete from gpc_mcp_calls
             where called_at < now() - (%s::text || ' days')::interval
             """,
-            (str(mcp_days),),
-        ).rowcount or 0
+                (str(mcp_days),),
+            ).rowcount
+            or 0
+        )
 
     return RetentionResult(
         mcp_days=mcp_days,

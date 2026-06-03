@@ -3,11 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass, asdict
 from typing import Any
 
-import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
-from gpc.config import POSTGRES_DSN
+from gpc.db import pg_connection
 from gpc.graph_query import graph_diff
 from gpc.self_metrics import fetch_snapshot
 
@@ -73,7 +72,7 @@ def list_drift_signals(
     if unresolved_only:
         where.append("resolved_at is null")
     clause = "where " + " and ".join(where) if where else ""
-    with psycopg.connect(POSTGRES_DSN, row_factory=dict_row) as conn:
+    with pg_connection(row_factory=dict_row) as conn:
         return conn.execute(
             f"""
             select id::text as id, created_at, project_slug, severity,
@@ -103,7 +102,10 @@ def _signals_from_diff(diff: dict[str, Any]) -> list[DriftSignal]:
                 severity="warning",
                 signal_type="confidence_inferred_shift",
                 message=f"INFERRED graph share increased by {inferred_delta:.2f} percentage points.",
-                evidence={"delta_pp": inferred_delta, "confidence_shift": diff.get("confidence_shift")},
+                evidence={
+                    "delta_pp": inferred_delta,
+                    "confidence_shift": diff.get("confidence_shift"),
+                },
             )
         )
 
@@ -114,7 +116,10 @@ def _signals_from_diff(diff: dict[str, Any]) -> list[DriftSignal]:
                 severity="warning",
                 signal_type="confidence_ambiguous_shift",
                 message=f"AMBIGUOUS graph share increased by {ambiguous_delta:.2f} percentage points.",
-                evidence={"delta_pp": ambiguous_delta, "confidence_shift": diff.get("confidence_shift")},
+                evidence={
+                    "delta_pp": ambiguous_delta,
+                    "confidence_shift": diff.get("confidence_shift"),
+                },
             )
         )
 
@@ -134,7 +139,11 @@ def _signals_from_diff(diff: dict[str, Any]) -> list[DriftSignal]:
                 severity="warning",
                 signal_type="weakly_connected_spike",
                 message=f"Weakly connected nodes rose from {int(weak_before)} to {int(weak_after)}.",
-                evidence={"before": weak_before, "after": weak_after, "delta": weak_delta},
+                evidence={
+                    "before": weak_before,
+                    "after": weak_after,
+                    "delta": weak_delta,
+                },
             )
         )
 
@@ -154,7 +163,11 @@ def _signals_from_diff(diff: dict[str, Any]) -> list[DriftSignal]:
                 severity="info",
                 signal_type="community_count_spike",
                 message=f"Graph community count rose from {int(community_before)} to {int(community_after)}.",
-                evidence={"before": community_before, "after": community_after, "delta": community_delta},
+                evidence={
+                    "before": community_before,
+                    "after": community_after,
+                    "delta": community_delta,
+                },
             )
         )
 
@@ -166,7 +179,11 @@ def _signals_from_diff(diff: dict[str, Any]) -> list[DriftSignal]:
                 severity="info",
                 signal_type="god_nodes_changed",
                 message="Top graph hubs changed.",
-                evidence={"entered": entered, "exited": exited, "stable": god.get("stable") or []},
+                evidence={
+                    "entered": entered,
+                    "exited": exited,
+                    "stable": god.get("stable") or [],
+                },
             )
         )
 
@@ -186,8 +203,12 @@ def _top3_shift(diff: dict[str, Any]) -> DriftSignal | None:
     to = fetch_snapshot(to_id)
     if not frm or not to:
         return None
-    before = [g.get("label") for g in (frm.get("god_nodes_top10") or [])[:3] if g.get("label")]
-    after = [g.get("label") for g in (to.get("god_nodes_top10") or [])[:3] if g.get("label")]
+    before = [
+        g.get("label") for g in (frm.get("god_nodes_top10") or [])[:3] if g.get("label")
+    ]
+    after = [
+        g.get("label") for g in (to.get("god_nodes_top10") or [])[:3] if g.get("label")
+    ]
     if before and after and before != after:
         return DriftSignal(
             severity="warning",
@@ -208,7 +229,7 @@ def _persist_signals(
     project_id = _project_id(project_slug)
     from_id = (diff.get("from") or {}).get("id")
     to_id = (diff.get("to") or {}).get("id")
-    with psycopg.connect(POSTGRES_DSN) as conn:
+    with pg_connection() as conn:
         for signal in signals:
             conn.execute(
                 """
@@ -233,7 +254,7 @@ def _persist_signals(
 
 
 def _project_id(project_slug: str) -> Any:
-    with psycopg.connect(POSTGRES_DSN) as conn:
+    with pg_connection() as conn:
         row = conn.execute(
             "select id from gpc_projects where slug = %s",
             (project_slug,),

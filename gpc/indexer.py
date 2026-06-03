@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
 import fnmatch
 import hashlib
@@ -17,7 +18,8 @@ from psycopg.types.json import Jsonb
 from qdrant_client import QdrantClient
 from qdrant_client.models import Filter, FieldCondition, MatchValue, PointStruct
 
-from gpc.config import COLLECTION_NAME, POSTGRES_DSN, QDRANT_HOST, QDRANT_PORT
+from gpc.db import get_qdrant, pg_connection
+from gpc.config import COLLECTION_NAME
 from gpc.embeddings import embed_texts
 from gpc.registry import (
     link_project_source,
@@ -25,7 +27,6 @@ from gpc.registry import (
     register_repo,
     register_source,
 )
-
 
 IGNORED_DIRS = {
     ".git",
@@ -208,7 +209,9 @@ CODE_EXTENSIONS = {
 
 DOC_EXTENSIONS = {".md", ".mdx", ".rst", ".txt"}
 CONFIG_EXTENSIONS = {".json", ".toml", ".yaml", ".yml", ".xml"}
-SUPPORTED_EXTENSIONS = CODE_EXTENSIONS | DOC_EXTENSIONS | CONFIG_EXTENSIONS | {".css", ".html", ".sql"}
+SUPPORTED_EXTENSIONS = (
+    CODE_EXTENSIONS | DOC_EXTENSIONS | CONFIG_EXTENSIONS | {".css", ".html", ".sql"}
+)
 SUPPORTED_FILENAMES = {
     ".dockerignore",
     ".env.example",
@@ -348,7 +351,7 @@ def index_project_path(
     project["_repo_id"] = repo["id"]
     project["_repo_slug"] = repo["slug"]
 
-    qdrant = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT)
+    qdrant = get_qdrant()
     run_id = _start_index_run(project["id"], opts)
 
     try:
@@ -419,7 +422,8 @@ def index_project_path(
             project_slug=project["slug"],
             project_id=str(project["id"]),
             discovery_mode=discovery.mode,
-            files_discovered=len(discovery.candidates) + sum(discovery.skipped.values()),
+            files_discovered=len(discovery.candidates)
+            + sum(discovery.skipped.values()),
             files_seen=len(discovery.candidates),
             files_indexed=files_indexed,
             files_unchanged=files_unchanged,
@@ -543,7 +547,9 @@ def _index_file(
                     "project_slug": project["slug"],
                     "project_name": project["name"],
                     "root_path": project["root_path"],
-                    "repo_id": str(project["_repo_id"]) if project.get("_repo_id") else None,
+                    "repo_id": (
+                        str(project["_repo_id"]) if project.get("_repo_id") else None
+                    ),
                     "repo_slug": project.get("_repo_slug"),
                     "file_id": str(chunk_row["file_id"]),
                     "chunk_id": str(chunk_row["id"]),
@@ -608,7 +614,12 @@ def chunk_text(
                 current = []
                 current_size = 0
             for start in range(0, len(paragraph), max_chars):
-                _append_chunk(chunks, relative_path, chunk_type, [paragraph[start : start + max_chars]])
+                _append_chunk(
+                    chunks,
+                    relative_path,
+                    chunk_type,
+                    [paragraph[start : start + max_chars]],
+                )
             continue
 
         if current and current_size + len(paragraph) > max_chars:
@@ -689,7 +700,9 @@ def _walk_discover_files(root: Path, options: IndexOptions) -> DiscoveryResult:
     candidates: list[FileCandidate] = []
     gitignore_patterns = _load_gitignore_patterns(root)
 
-    for current_root, dirnames, filenames in os.walk(root, followlinks=options.follow_symlinks):
+    for current_root, dirnames, filenames in os.walk(
+        root, followlinks=options.follow_symlinks
+    ):
         current_path = Path(current_root)
         rel_dir = current_path.relative_to(root)
         kept_dirs = []
@@ -709,7 +722,9 @@ def _walk_discover_files(root: Path, options: IndexOptions) -> DiscoveryResult:
 
             candidates.append(candidate)
             if options.limit_files and len(candidates) >= options.limit_files:
-                return DiscoveryResult(candidates=candidates, skipped=skipped, mode="walk")
+                return DiscoveryResult(
+                    candidates=candidates, skipped=skipped, mode="walk"
+                )
 
     return DiscoveryResult(candidates=candidates, skipped=skipped, mode="walk")
 
@@ -947,7 +962,9 @@ def _insert_chunks(
     return rows
 
 
-def _clear_project_index(project: dict[str, Any], qdrant: QdrantClient) -> FileIndexResult:
+def _clear_project_index(
+    project: dict[str, Any], qdrant: QdrantClient
+) -> FileIndexResult:
     qdrant.delete(
         collection_name=COLLECTION_NAME,
         points_selector=Filter(
@@ -960,14 +977,6 @@ def _clear_project_index(project: dict[str, Any], qdrant: QdrantClient) -> FileI
         ),
     )
     with _connect() as conn:
-        rows = conn.execute(
-            """
-            select count(*) as file_count
-            from gpc_files
-            where project_id = %s
-            """,
-            (project["id"],),
-        ).fetchone()
         conn.execute("delete from gpc_files where project_id = %s", (project["id"],))
     return FileIndexResult(status="indexed", chunks_deleted=0, points_deleted=0)
 
@@ -1052,7 +1061,9 @@ def _prune_missing_files(
 
     if file_ids:
         with _connect() as conn:
-            conn.execute("delete from gpc_files where id = any(%s::uuid[])", (file_ids,))
+            conn.execute(
+                "delete from gpc_files where id = any(%s::uuid[])", (file_ids,)
+            )
 
     return FileIndexResult(
         status="indexed" if file_ids else "unchanged",
@@ -1148,8 +1159,8 @@ def _options_metadata(options: IndexOptions) -> dict[str, Any]:
     }
 
 
-def _connect() -> psycopg.Connection:
-    return psycopg.connect(POSTGRES_DSN, row_factory=dict_row)
+def _connect() -> AbstractContextManager[psycopg.Connection]:
+    return pg_connection(row_factory=dict_row)
 
 
 def _language_for_path(path: Path) -> str | None:
@@ -1186,7 +1197,9 @@ def _chunk_type(path: Path) -> str:
 
 
 def _is_supported_text_path(path: Path) -> bool:
-    return path.suffix.lower() in SUPPORTED_EXTENSIONS or path.name in SUPPORTED_FILENAMES
+    return (
+        path.suffix.lower() in SUPPORTED_EXTENSIONS or path.name in SUPPORTED_FILENAMES
+    )
 
 
 def _looks_sensitive_filename(filename: str) -> bool:
@@ -1198,7 +1211,9 @@ def _looks_sensitive_filename(filename: str) -> bool:
         return True
     if Path(filename).suffix.lower() in SENSITIVE_EXTENSIONS:
         return True
-    return any(fnmatch.fnmatch(filename, pattern) for pattern in SENSITIVE_NAME_PATTERNS)
+    return any(
+        fnmatch.fnmatch(filename, pattern) for pattern in SENSITIVE_NAME_PATTERNS
+    )
 
 
 def _looks_sensitive_content(text: str) -> bool:
@@ -1206,10 +1221,14 @@ def _looks_sensitive_content(text: str) -> bool:
     return any(pattern.search(sample) for pattern in SENSITIVE_CONTENT_PATTERNS)
 
 
-def _should_ignore_dir(rel_path: Path, dirname: str, gitignore_patterns: list[str]) -> bool:
+def _should_ignore_dir(
+    rel_path: Path, dirname: str, gitignore_patterns: list[str]
+) -> bool:
     if dirname in IGNORED_DIRS:
         return True
-    return _matches_gitignore(rel_path.as_posix(), is_dir=True, patterns=gitignore_patterns)
+    return _matches_gitignore(
+        rel_path.as_posix(), is_dir=True, patterns=gitignore_patterns
+    )
 
 
 def _load_gitignore_patterns(root: Path) -> list[str]:
@@ -1226,7 +1245,9 @@ def _load_gitignore_patterns(root: Path) -> list[str]:
     return patterns
 
 
-def _matches_gitignore(relative_path: str, *, is_dir: bool, patterns: list[str]) -> bool:
+def _matches_gitignore(
+    relative_path: str, *, is_dir: bool, patterns: list[str]
+) -> bool:
     normalized = relative_path.strip("/")
     parts = normalized.split("/")
 

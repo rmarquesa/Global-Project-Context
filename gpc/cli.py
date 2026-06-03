@@ -9,17 +9,14 @@ import subprocess
 import sys
 from typing import Sequence
 
-import psycopg
-from qdrant_client import QdrantClient
 
+from gpc.db import get_qdrant, pg_connection
 from gpc.config import (
     COLLECTION_NAME,
     MCP_HTTP_HOST,
     MCP_HTTP_PATH,
     MCP_HTTP_PORT,
     POSTGRES_DSN,
-    QDRANT_HOST,
-    QDRANT_PORT,
     ROOT_DIR,
 )
 from gpc.embeddings import active_embedding_model, embedding_dimension
@@ -36,7 +33,6 @@ from gpc.registry import (
 from gpc.search import search_project_context
 from gpc.status import get_index_status
 from gpc.token_economy import estimate_for_project
-
 
 HOOKS = ("post-commit", "post-merge", "post-checkout")
 MANAGED_HOOK_MARKER = "GPC managed hook"
@@ -67,11 +63,23 @@ def build_parser() -> argparse.ArgumentParser:
     init_parser.add_argument("--slug", help="Project slug. Defaults to directory name.")
     init_parser.add_argument("--name", help="Project display name.")
     init_parser.add_argument("--description", help="Optional project description.")
-    init_parser.add_argument("--alias", action="append", default=[], help="Project alias.")
-    init_parser.add_argument("--force", action="store_true", help="Overwrite managed files.")
-    init_parser.add_argument("--no-hooks", action="store_true", help="Do not install Git hooks.")
-    init_parser.add_argument("--foreground-hooks", action="store_true", help="Run hook indexing in foreground.")
-    init_parser.add_argument("--no-index", action="store_true", help="Skip initial indexing.")
+    init_parser.add_argument(
+        "--alias", action="append", default=[], help="Project alias."
+    )
+    init_parser.add_argument(
+        "--force", action="store_true", help="Overwrite managed files."
+    )
+    init_parser.add_argument(
+        "--no-hooks", action="store_true", help="Do not install Git hooks."
+    )
+    init_parser.add_argument(
+        "--foreground-hooks",
+        action="store_true",
+        help="Run hook indexing in foreground.",
+    )
+    init_parser.add_argument(
+        "--no-index", action="store_true", help="Skip initial indexing."
+    )
     init_parser.add_argument(
         "--no-gitignore",
         action="store_true",
@@ -91,71 +99,141 @@ def build_parser() -> argparse.ArgumentParser:
 
     status_parser = subparsers.add_parser("status", help="Show index status.")
     status_parser.add_argument("--project", help="Project slug or alias.")
-    status_parser.add_argument("--cwd", default=str(Path.cwd()), help="Project resolution cwd.")
-    status_parser.add_argument("--runs", type=int, default=3, help="Recent runs to print.")
-    status_parser.add_argument("--staleness", action="store_true", help="Also report Git/index staleness.")
+    status_parser.add_argument(
+        "--cwd", default=str(Path.cwd()), help="Project resolution cwd."
+    )
+    status_parser.add_argument(
+        "--runs", type=int, default=3, help="Recent runs to print."
+    )
+    status_parser.add_argument(
+        "--staleness", action="store_true", help="Also report Git/index staleness."
+    )
     status_parser.set_defaults(func=cmd_status)
 
-    stale_parser = subparsers.add_parser("stale", help="Detect whether project context is stale against Git state.")
+    stale_parser = subparsers.add_parser(
+        "stale", help="Detect whether project context is stale against Git state."
+    )
     stale_parser.add_argument("--project", help="Project slug or alias.")
-    stale_parser.add_argument("--cwd", default=str(Path.cwd()), help="Project resolution cwd.")
-    stale_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
+    stale_parser.add_argument(
+        "--cwd", default=str(Path.cwd()), help="Project resolution cwd."
+    )
+    stale_parser.add_argument(
+        "--json", action="store_true", help="Emit machine-readable JSON."
+    )
     stale_parser.set_defaults(func=cmd_stale)
 
     search_parser = subparsers.add_parser("search", help="Search indexed context.")
     search_parser.add_argument("query", help="Semantic search query.")
     search_parser.add_argument("--project", help="Project slug or alias.")
-    search_parser.add_argument("--cwd", default=str(Path.cwd()), help="Project resolution cwd.")
-    search_parser.add_argument("--limit", type=int, default=5, help="Number of results.")
-    search_parser.add_argument("--content-chars", type=int, default=700, help="Characters per result.")
+    search_parser.add_argument(
+        "--cwd", default=str(Path.cwd()), help="Project resolution cwd."
+    )
+    search_parser.add_argument(
+        "--limit", type=int, default=5, help="Number of results."
+    )
+    search_parser.add_argument(
+        "--content-chars", type=int, default=700, help="Characters per result."
+    )
     search_parser.set_defaults(func=cmd_search)
 
-    context_pack_parser = subparsers.add_parser("context-pack", help="Write a cited markdown context pack for a query.")
+    context_pack_parser = subparsers.add_parser(
+        "context-pack", help="Write a cited markdown context pack for a query."
+    )
     context_pack_parser.add_argument("query", help="Query to retrieve context for.")
     context_pack_parser.add_argument("--project", help="Project slug or alias.")
-    context_pack_parser.add_argument("--cwd", default=str(Path.cwd()), help="Project resolution cwd.")
-    context_pack_parser.add_argument("--repo", action="append", help="Optional repo filter; repeat for multiple repos.")
+    context_pack_parser.add_argument(
+        "--cwd", default=str(Path.cwd()), help="Project resolution cwd."
+    )
+    context_pack_parser.add_argument(
+        "--repo",
+        action="append",
+        help="Optional repo filter; repeat for multiple repos.",
+    )
     context_pack_parser.add_argument("--max-chunks", type=int, default=8)
     context_pack_parser.add_argument("--max-chars", type=int, default=12000)
-    context_pack_parser.add_argument("--include-graph", action="store_true", help="Append graph neighbour notes when available.")
-    context_pack_parser.add_argument("--output", required=True, help="Markdown output path.")
+    context_pack_parser.add_argument(
+        "--include-graph",
+        action="store_true",
+        help="Append graph neighbour notes when available.",
+    )
+    context_pack_parser.add_argument(
+        "--output", required=True, help="Markdown output path."
+    )
     context_pack_parser.set_defaults(func=cmd_context_pack)
 
-    token_parser = subparsers.add_parser("token-savings", help="Estimate token savings.")
+    token_parser = subparsers.add_parser(
+        "token-savings", help="Estimate token savings."
+    )
     token_parser.add_argument("query", help="Question or task to retrieve context for.")
-    token_parser.add_argument("--project", action="append", help="Project slug or alias. Repeatable.")
+    token_parser.add_argument(
+        "--project", action="append", help="Project slug or alias. Repeatable."
+    )
     token_parser.add_argument("--cwd", help="Project resolution cwd.")
     token_parser.add_argument("--max-chunks", type=int, default=5)
     token_parser.add_argument("--max-chars", type=int, default=6_000)
     token_parser.add_argument("--json", action="store_true")
     token_parser.set_defaults(func=cmd_token_savings)
 
-    eval_search_parser = subparsers.add_parser("eval-search", help="Evaluate semantic search quality against a fixture.")
-    eval_search_parser.add_argument("--project", required=True, help="Project slug or alias.")
-    eval_search_parser.add_argument("--fixture", required=True, help="YAML fixture with queries and expected paths.")
-    eval_search_parser.add_argument("--k", type=int, default=5, help="Top-k search results to evaluate.")
-    eval_search_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
+    eval_search_parser = subparsers.add_parser(
+        "eval-search", help="Evaluate semantic search quality against a fixture."
+    )
+    eval_search_parser.add_argument(
+        "--project", required=True, help="Project slug or alias."
+    )
+    eval_search_parser.add_argument(
+        "--fixture", required=True, help="YAML fixture with queries and expected paths."
+    )
+    eval_search_parser.add_argument(
+        "--k", type=int, default=5, help="Top-k search results to evaluate."
+    )
+    eval_search_parser.add_argument(
+        "--json", action="store_true", help="Emit machine-readable JSON."
+    )
     eval_search_parser.set_defaults(func=cmd_eval_search)
 
-    doctor_parser = subparsers.add_parser("doctor", help="Check local GPC dependencies.")
+    doctor_parser = subparsers.add_parser(
+        "doctor", help="Check local GPC dependencies."
+    )
     doctor_parser.set_defaults(func=cmd_doctor)
 
-    verify_parser = subparsers.add_parser("verify", help="Verify project context health across local GPC services.")
+    verify_parser = subparsers.add_parser(
+        "verify", help="Verify project context health across local GPC services."
+    )
     verify_parser.add_argument("--project", help="Project slug or alias.")
-    verify_parser.add_argument("--cwd", default=str(Path.cwd()), help="Project resolution cwd.")
-    verify_parser.add_argument("--quick", action="store_true", help="Skip live service checks.")
-    verify_parser.add_argument("--live", action="store_true", help="Run live service checks explicitly.")
-    verify_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
+    verify_parser.add_argument(
+        "--cwd", default=str(Path.cwd()), help="Project resolution cwd."
+    )
+    verify_parser.add_argument(
+        "--quick", action="store_true", help="Skip live service checks."
+    )
+    verify_parser.add_argument(
+        "--live", action="store_true", help="Run live service checks explicitly."
+    )
+    verify_parser.add_argument(
+        "--json", action="store_true", help="Emit machine-readable JSON."
+    )
     verify_parser.set_defaults(func=cmd_verify)
 
-    health_parser = subparsers.add_parser("health-report", help="Produce an executive project health report.")
-    health_parser.add_argument("--project", required=True, help="Project slug or alias.")
-    health_parser.add_argument("--cwd", default=str(Path.cwd()), help="Project resolution cwd.")
-    health_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
-    health_parser.add_argument("--markdown", action="store_true", help="Emit markdown output.")
+    health_parser = subparsers.add_parser(
+        "health-report", help="Produce an executive project health report."
+    )
+    health_parser.add_argument(
+        "--project", required=True, help="Project slug or alias."
+    )
+    health_parser.add_argument(
+        "--cwd", default=str(Path.cwd()), help="Project resolution cwd."
+    )
+    health_parser.add_argument(
+        "--json", action="store_true", help="Emit machine-readable JSON."
+    )
+    health_parser.add_argument(
+        "--markdown", action="store_true", help="Emit markdown output."
+    )
     health_parser.set_defaults(func=cmd_health_report)
 
-    shims_parser = subparsers.add_parser("install-shims", help="Install global shell commands.")
+    shims_parser = subparsers.add_parser(
+        "install-shims", help="Install global shell commands."
+    )
     shims_parser.add_argument(
         "--bin-dir",
         default=str(Path.home() / ".local" / "bin"),
@@ -163,7 +241,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     shims_parser.set_defaults(func=cmd_install_shims)
 
-    clients_parser = subparsers.add_parser("install-clients", help="Install MCP client config.")
+    clients_parser = subparsers.add_parser(
+        "install-clients", help="Install MCP client config."
+    )
     clients_parser.add_argument("--clients", default="all")
     clients_parser.add_argument("--dry-run", action="store_true")
     clients_parser.add_argument("--validate-only", action="store_true")
@@ -172,20 +252,28 @@ def build_parser() -> argparse.ArgumentParser:
     clients_parser.set_defaults(func=cmd_install_clients)
 
     migrate_parser = subparsers.add_parser("migrate", help="Run Postgres migrations.")
-    migrate_parser.add_argument("migration_command", nargs="?", default="up", choices=("up", "status"))
+    migrate_parser.add_argument(
+        "migration_command", nargs="?", default="up", choices=("up", "status")
+    )
     migrate_parser.set_defaults(func=cmd_migrate)
 
-    qdrant_parser = subparsers.add_parser("init-qdrant", help="Initialize Qdrant collection.")
+    qdrant_parser = subparsers.add_parser(
+        "init-qdrant", help="Initialize Qdrant collection."
+    )
     qdrant_parser.add_argument("--reset", action="store_true")
     qdrant_parser.set_defaults(func=cmd_init_qdrant)
 
-    http_parser = subparsers.add_parser("mcp-http", help="Run the MCP server over streamable HTTP.")
+    http_parser = subparsers.add_parser(
+        "mcp-http", help="Run the MCP server over streamable HTTP."
+    )
     http_parser.add_argument("--host", default=MCP_HTTP_HOST)
     http_parser.add_argument("--port", type=int, default=MCP_HTTP_PORT)
     http_parser.add_argument("--path", default=MCP_HTTP_PATH)
     http_parser.set_defaults(func=cmd_mcp_http)
 
-    mcp_parser = subparsers.add_parser("mcp-stdio", help="Run the MCP server over stdio.")
+    mcp_parser = subparsers.add_parser(
+        "mcp-stdio", help="Run the MCP server over stdio."
+    )
     mcp_parser.set_defaults(func=cmd_mcp_stdio)
 
     # Project lifecycle
@@ -246,7 +334,9 @@ def build_parser() -> argparse.ArgumentParser:
         "consolidate",
         help="Fold several standalone projects into one project owning them as repos.",
     )
-    project_consolidate.add_argument("--target", required=True, help="Target project slug.")
+    project_consolidate.add_argument(
+        "--target", required=True, help="Target project slug."
+    )
     project_consolidate.add_argument(
         "--source",
         action="append",
@@ -264,7 +354,9 @@ def build_parser() -> argparse.ArgumentParser:
     project_consolidate.set_defaults(func=cmd_project_consolidate)
 
     # Repo lifecycle
-    repo_parser = subparsers.add_parser("repo", help="Manage repositories under a project.")
+    repo_parser = subparsers.add_parser(
+        "repo", help="Manage repositories under a project."
+    )
     repo_subs = repo_parser.add_subparsers(dest="repo_cmd", required=True)
 
     repo_add = repo_subs.add_parser("add", help="Attach a repo to a project.")
@@ -296,10 +388,14 @@ def build_parser() -> argparse.ArgumentParser:
         "graph-reset",
         help="Wipe the Neo4j projection and optionally rebuild it from Postgres.",
     )
-    graph_reset_parser.add_argument("--project", help="Restrict to a single project slug.")
+    graph_reset_parser.add_argument(
+        "--project", help="Restrict to a single project slug."
+    )
     graph_reset_parser.add_argument("--yes", action="store_true", required=False)
     graph_reset_parser.add_argument(
-        "--rebuild", action="store_true", help="Re-run project_graph_to_neo4j and bridging after the wipe."
+        "--rebuild",
+        action="store_true",
+        help="Re-run project_graph_to_neo4j and bridging after the wipe.",
     )
     graph_reset_parser.set_defaults(func=cmd_graph_reset)
 
@@ -360,21 +456,31 @@ def build_parser() -> argparse.ArgumentParser:
     )
     metrics_signals.add_argument("--project")
     metrics_signals.add_argument("--limit", type=int, default=50)
-    metrics_signals.add_argument("--all", action="store_true", help="Include resolved signals.")
+    metrics_signals.add_argument(
+        "--all", action="store_true", help="Include resolved signals."
+    )
     metrics_signals.add_argument("--json", action="store_true")
     metrics_signals.set_defaults(func=cmd_metrics_signals)
 
-    mcp_usage_parser = subparsers.add_parser("mcp-usage", help="Summarize MCP tool-call usage without raw payloads.")
+    mcp_usage_parser = subparsers.add_parser(
+        "mcp-usage", help="Summarize MCP tool-call usage without raw payloads."
+    )
     mcp_usage_parser.add_argument("--project", help="Project slug filter.")
-    mcp_usage_parser.add_argument("--since", default="24h", help="Window such as 24h or 7d.")
-    mcp_usage_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
+    mcp_usage_parser.add_argument(
+        "--since", default="24h", help="Window such as 24h or 7d."
+    )
+    mcp_usage_parser.add_argument(
+        "--json", action="store_true", help="Emit machine-readable JSON."
+    )
     mcp_usage_parser.set_defaults(func=cmd_mcp_usage)
 
     maintenance_parser = subparsers.add_parser(
         "maintenance",
         help="Operational maintenance tasks for local GPC data.",
     )
-    maintenance_subs = maintenance_parser.add_subparsers(dest="maintenance_cmd", required=True)
+    maintenance_subs = maintenance_parser.add_subparsers(
+        dest="maintenance_cmd", required=True
+    )
 
     retention_parser = maintenance_subs.add_parser(
         "retention",
@@ -436,10 +542,16 @@ def build_parser() -> argparse.ArgumentParser:
         "graph-sync",
         help="Project local graphify-out/graph.json into the Neo4j Graphify read model.",
     )
-    graph_sync_parser.add_argument("path", nargs="?", default=".", help="Repository root path.")
+    graph_sync_parser.add_argument(
+        "path", nargs="?", default=".", help="Repository root path."
+    )
     graph_sync_parser.add_argument("--project", required=True, help="GPC project slug.")
-    graph_sync_parser.add_argument("--repo", required=True, help="Repository slug within the project.")
-    graph_sync_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
+    graph_sync_parser.add_argument(
+        "--repo", required=True, help="Repository slug within the project."
+    )
+    graph_sync_parser.add_argument(
+        "--json", action="store_true", help="Emit machine-readable JSON."
+    )
     graph_sync_parser.add_argument(
         "--no-clear",
         action="store_true",
@@ -465,10 +577,18 @@ def add_index_args(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument("--name", help="Project display name.")
     parser.add_argument("--description", help="Optional project description.")
-    parser.add_argument("--reset", action="store_true", help="Delete existing index first.")
-    parser.add_argument("--force", action="store_true", help="Re-embed unchanged files.")
-    parser.add_argument("--no-prune", action="store_true", help="Do not prune missing files.")
-    parser.add_argument("--fail-fast", action="store_true", help="Stop on first file error.")
+    parser.add_argument(
+        "--reset", action="store_true", help="Delete existing index first."
+    )
+    parser.add_argument(
+        "--force", action="store_true", help="Re-embed unchanged files."
+    )
+    parser.add_argument(
+        "--no-prune", action="store_true", help="Do not prune missing files."
+    )
+    parser.add_argument(
+        "--fail-fast", action="store_true", help="Stop on first file error."
+    )
     parser.add_argument("--include-unknown-text", action="store_true")
     parser.add_argument("--follow-symlinks", action="store_true")
     parser.add_argument("--limit-files", type=int)
@@ -479,7 +599,9 @@ def add_index_args(parser: argparse.ArgumentParser) -> None:
 
 def cmd_index(args: argparse.Namespace) -> int:
     if args.parent_project and args.slug:
-        raise SystemExit("Use either --slug for a standalone project or --project/--repo for a multi-repo project, not both.")
+        raise SystemExit(
+            "Use either --slug for a standalone project or --project/--repo for a multi-repo project, not both."
+        )
     if args.repo_slug and not args.parent_project:
         raise SystemExit("--repo requires --project")
 
@@ -512,7 +634,9 @@ def cmd_init(args: argparse.Namespace) -> int:
         raise SystemExit(f"Project root does not exist or is not a directory: {root}")
 
     parent_project = getattr(args, "parent_project", None)
-    repo_slug = normalize_slug(args.repo_slug) if getattr(args, "repo_slug", None) else None
+    repo_slug = (
+        normalize_slug(args.repo_slug) if getattr(args, "repo_slug", None) else None
+    )
 
     if parent_project:
         # New mode: attach this directory as a repo of an existing project.
@@ -531,7 +655,9 @@ def cmd_init(args: argparse.Namespace) -> int:
         if not args.no_gitignore:
             ensure_gitignore_entry(root)
         if not args.no_hooks:
-            install_git_hooks(root, force=args.force, background=not args.foreground_hooks)
+            install_git_hooks(
+                root, force=args.force, background=not args.foreground_hooks
+            )
         write_repo_config(
             root,
             project_slug=project_slug_for_index,
@@ -648,7 +774,9 @@ def cmd_stale(args: argparse.Namespace) -> int:
     if args.json:
         print(json.dumps(report.to_dict(), indent=2))
     else:
-        print(f"project={report.project_slug} stale={str(report.is_stale).lower()} summary={report.summary}")
+        print(
+            f"project={report.project_slug} stale={str(report.is_stale).lower()} summary={report.summary}"
+        )
         for action in report.to_dict()["remediation"]:
             print(f"remediation={action}")
     return 0
@@ -742,11 +870,15 @@ def cmd_eval_search(args: argparse.Namespace) -> int:
         )
         for result in report.results:
             status = "hit" if result.hit_paths else "miss"
-            print(f"{status} query={result.query!r} hits={result.hit_paths} missing={result.missing_expected_paths}")
+            print(
+                f"{status} query={result.query!r} hits={result.hit_paths} missing={result.missing_expected_paths}"
+            )
     return 0
 
 
 def cmd_doctor(_: argparse.Namespace) -> int:
+    from gpc.config import insecure_credential_warnings
+
     checks = [
         check_path("root", ROOT_DIR),
         check_command("python", sys.executable),
@@ -756,6 +888,18 @@ def cmd_doctor(_: argparse.Namespace) -> int:
         check_qdrant(),
         check_ollama_embedding(),
     ]
+    cred_warnings = insecure_credential_warnings()
+    checks.append(
+        (
+            "credentials",
+            not cred_warnings,
+            (
+                "default secrets on a non-local host: " + " ".join(cred_warnings)
+                if cred_warnings
+                else "no default secrets exposed on non-local hosts"
+            ),
+        )
+    )
     for name, ok, detail in checks:
         print(f"{'ok' if ok else 'fail'} {name}: {detail}")
     return 0 if all(ok for _, ok, _ in checks) else 1
@@ -764,11 +908,15 @@ def cmd_doctor(_: argparse.Namespace) -> int:
 def cmd_verify(args: argparse.Namespace) -> int:
     from gpc.verify import verify_project
 
-    report = verify_project(project=args.project, cwd=args.cwd, quick=args.quick, live=args.live)
+    report = verify_project(
+        project=args.project, cwd=args.cwd, quick=args.quick, live=args.live
+    )
     if args.json:
         print(json.dumps(report.to_dict(), indent=2))
     else:
-        print(f"project={report.project_slug} status={report.overall_status} summary={report.summary}")
+        print(
+            f"project={report.project_slug} status={report.overall_status} summary={report.summary}"
+        )
         for check in report.checks:
             print(f"{check.status} {check.name}: {check.message}")
             if check.remediation:
@@ -1055,20 +1203,22 @@ def cmd_repo_add(args: argparse.Namespace) -> int:
 def cmd_repo_list(args: argparse.Namespace) -> int:
     rows = list_repos(args.project)
     if args.json:
-        print(json.dumps(
-            [
-                {
-                    "project": r["project_slug"],
-                    "repo": r["slug"],
-                    "name": r["name"],
-                    "root_path": r["root_path"],
-                    "description": r.get("description"),
-                }
-                for r in rows
-            ],
-            default=str,
-            indent=2,
-        ))
+        print(
+            json.dumps(
+                [
+                    {
+                        "project": r["project_slug"],
+                        "repo": r["slug"],
+                        "name": r["name"],
+                        "root_path": r["root_path"],
+                        "description": r.get("description"),
+                    }
+                    for r in rows
+                ],
+                default=str,
+                indent=2,
+            )
+        )
         return 0
     if not rows:
         print("No repos registered.")
@@ -1080,11 +1230,15 @@ def cmd_repo_list(args: argparse.Namespace) -> int:
 
 def cmd_repo_remove(args: argparse.Namespace) -> int:
     if not args.yes:
-        print("Refuse: pass --yes to confirm. Files and chunks will keep their "
-              "project_id but lose their repo_id (set to NULL).", file=sys.stderr)
+        print(
+            "Refuse: pass --yes to confirm. Files and chunks will keep their "
+            "project_id but lose their repo_id (set to NULL).",
+            file=sys.stderr,
+        )
         return 2
     import psycopg as _psycopg  # noqa: F401
     from gpc.registry import connect
+
     project_slug = normalize_slug(args.project)
     repo_slug = normalize_slug(args.repo)
     with connect() as conn:
@@ -1095,10 +1249,13 @@ def cmd_repo_remove(args: argparse.Namespace) -> int:
         if not project:
             print(f"Project not found: {project_slug}", file=sys.stderr)
             return 1
-        deleted = conn.execute(
-            "delete from gpc_repos where project_id = %s and slug = %s",
-            (project["id"], repo_slug),
-        ).rowcount or 0
+        deleted = (
+            conn.execute(
+                "delete from gpc_repos where project_id = %s and slug = %s",
+                (project["id"], repo_slug),
+            ).rowcount
+            or 0
+        )
     print(f"repo_removed project={project_slug} repo={repo_slug} deleted={deleted}")
     return 0
 
@@ -1179,9 +1336,7 @@ def cmd_metrics_collect(args: argparse.Namespace) -> int:
             )
         )
         return 0
-    print(
-        f"snapshot={result.id} project={result.project_slug} source={result.source}"
-    )
+    print(f"snapshot={result.id} project={result.project_slug} source={result.source}")
     for key in (
         "files_count",
         "chunks_count",
@@ -1275,9 +1430,13 @@ def cmd_mcp_usage(args: argparse.Namespace) -> int:
     if args.json:
         print(json.dumps(summary, indent=2))
     else:
-        print(f"calls={summary['total_calls']} window_hours={summary['window_hours']} project={summary.get('project')}")
+        print(
+            f"calls={summary['total_calls']} window_hours={summary['window_hours']} project={summary.get('project')}"
+        )
         for row in summary.get("by_tool", []):
-            print(f"tool={row['tool']} calls={row['calls']} avg_latency_ms={row['avg_latency_ms']}")
+            print(
+                f"tool={row['tool']} calls={row['calls']} avg_latency_ms={row['avg_latency_ms']}"
+            )
     return 0
 
 
@@ -1302,7 +1461,9 @@ def cmd_maintenance_doctor(args: argparse.Namespace) -> int:
             f"requires_attention={str(report.requires_attention).lower()} summary={report.summary}"
         )
         for finding in report.findings:
-            print(f"{finding.severity} {finding.name} count={finding.count}: {finding.message}")
+            print(
+                f"{finding.severity} {finding.name} count={finding.count}: {finding.message}"
+            )
             if finding.remediation:
                 print(f"  remediation={finding.remediation}")
     return 1 if any(f.severity == "fail" for f in report.findings) else 0
@@ -1402,7 +1563,9 @@ def cmd_graph_sync(args: argparse.Namespace) -> int:
 
 def run_module(module: str, args: Sequence[str]) -> int:
     env = os.environ.copy()
-    env["PYTHONPATH"] = f"{ROOT_DIR}{os.pathsep}{env.get('PYTHONPATH', '')}".rstrip(os.pathsep)
+    env["PYTHONPATH"] = f"{ROOT_DIR}{os.pathsep}{env.get('PYTHONPATH', '')}".rstrip(
+        os.pathsep
+    )
     result = subprocess.run([sys.executable, "-m", module, *args], env=env, check=False)
     return result.returncode
 
@@ -1417,7 +1580,8 @@ def print_index_stats(stats) -> None:
     )
     if stats.skipped_reasons:
         reasons = ", ".join(
-            f"{reason}:{count}" for reason, count in sorted(stats.skipped_reasons.items())
+            f"{reason}:{count}"
+            for reason, count in sorted(stats.skipped_reasons.items())
         )
         print(f"skipped_reasons={reasons}")
     if stats.errors:
@@ -1470,7 +1634,9 @@ def ensure_gitignore_entry(root: Path) -> None:
         if entry in lines:
             return
         prefix = "\n" if lines else ""
-        gitignore.write_text(gitignore.read_text().rstrip() + f"{prefix}\n# GPC runtime data\n{entry}\n")
+        gitignore.write_text(
+            gitignore.read_text().rstrip() + f"{prefix}\n# GPC runtime data\n{entry}\n"
+        )
     else:
         gitignore.write_text(f"# GPC runtime data\n{entry}\n")
     print(f"updated {gitignore}")
@@ -1495,9 +1661,13 @@ def install_git_hooks(root: Path, *, force: bool, background: bool) -> None:
     for hook in HOOKS:
         hook_path = hook_dir / hook
         content = git_hook_text(hook, background=background)
-        if hook_path.exists() and MANAGED_HOOK_MARKER not in hook_path.read_text(errors="ignore"):
+        if hook_path.exists() and MANAGED_HOOK_MARKER not in hook_path.read_text(
+            errors="ignore"
+        ):
             if not force:
-                print(f"{hook_path}: existing non-GPC hook kept; use --force to replace")
+                print(
+                    f"{hook_path}: existing non-GPC hook kept; use --force to replace"
+                )
                 continue
         hook_path.write_text(content)
         hook_path.chmod(0o755)
@@ -1624,7 +1794,7 @@ def check_command(name: str, command: str) -> tuple[str, bool, str]:
 
 def check_postgres() -> tuple[str, bool, str]:
     try:
-        with psycopg.connect(POSTGRES_DSN) as conn:
+        with pg_connection() as conn:
             conn.execute("select 1")
         return "postgres", True, POSTGRES_DSN
     except Exception as exc:
@@ -1633,7 +1803,7 @@ def check_postgres() -> tuple[str, bool, str]:
 
 def check_qdrant() -> tuple[str, bool, str]:
     try:
-        client = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT)
+        client = get_qdrant()
         info = client.get_collection(COLLECTION_NAME)
         size = getattr(info.config.params.vectors, "size", None)
         return "qdrant", True, f"{COLLECTION_NAME} size={size}"

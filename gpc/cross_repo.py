@@ -18,12 +18,10 @@ from dataclasses import dataclass, field
 import re
 from typing import Iterable, Sequence
 
-import psycopg
 from psycopg.rows import dict_row
 
-from gpc.config import POSTGRES_DSN
+from gpc.db import pg_connection
 from gpc.graph import neo4j_driver
-
 
 RULE_SAME_SOURCE_FILE = "same_source_file"
 RULE_SAME_CODE_SYMBOL = "same_code_symbol"
@@ -45,17 +43,71 @@ ALL_RULES: tuple[str, ...] = (
 
 GENERIC_LABEL_STEMS = frozenset(
     {
-        "main", "run", "start", "stop", "init", "setup", "teardown",
-        "fetch", "get", "set", "post", "put", "delete", "handle", "handler",
-        "execute", "dispatch", "process", "apply", "call", "invoke",
-        "test", "tests", "spec", "mock", "stub",
-        "parse", "format", "serialize", "deserialize", "render",
-        "open", "close", "read", "write", "load", "save",
-        "index", "config", "app", "server", "client",
-        "utils", "util", "helpers", "helper", "types", "constants",
-        "readme", "license", "contributing", "changelog", "dockerfile",
-        "package", "tsconfig", "eslint", "prettier", "vitest", "jest",
-        "webpack", "rollup", "vite", "babel", "wrangler", "gitignore",
+        "main",
+        "run",
+        "start",
+        "stop",
+        "init",
+        "setup",
+        "teardown",
+        "fetch",
+        "get",
+        "set",
+        "post",
+        "put",
+        "delete",
+        "handle",
+        "handler",
+        "execute",
+        "dispatch",
+        "process",
+        "apply",
+        "call",
+        "invoke",
+        "test",
+        "tests",
+        "spec",
+        "mock",
+        "stub",
+        "parse",
+        "format",
+        "serialize",
+        "deserialize",
+        "render",
+        "open",
+        "close",
+        "read",
+        "write",
+        "load",
+        "save",
+        "index",
+        "config",
+        "app",
+        "server",
+        "client",
+        "utils",
+        "util",
+        "helpers",
+        "helper",
+        "types",
+        "constants",
+        "readme",
+        "license",
+        "contributing",
+        "changelog",
+        "dockerfile",
+        "package",
+        "tsconfig",
+        "eslint",
+        "prettier",
+        "vitest",
+        "jest",
+        "webpack",
+        "rollup",
+        "vite",
+        "babel",
+        "wrangler",
+        "gitignore",
         "makefile",
     }
 )
@@ -160,7 +212,7 @@ def _collect_content_hash_pairs(project_slug: str) -> list[dict]:
     """
 
     # 1. Pull hashes from Postgres, scoped to the project.
-    with psycopg.connect(POSTGRES_DSN, row_factory=dict_row) as conn:
+    with pg_connection(row_factory=dict_row) as conn:
         file_rows = conn.execute(
             """
             select r.slug as repo_slug,
@@ -202,7 +254,9 @@ def _collect_content_hash_pairs(project_slug: str) -> list[dict]:
     locations_flat: list[dict[str, str]] = []
     for target in targets:
         for repo_slug, rel in target["locations"]:
-            locations_flat.append({"repo": repo_slug, "path": rel, "hash": target["hash"]})
+            locations_flat.append(
+                {"repo": repo_slug, "path": rel, "hash": target["hash"]}
+            )
 
     with neo4j_driver() as driver:
         with driver.session() as session:
@@ -342,7 +396,9 @@ def build_bridges(
     """
 
     if not project_slug:
-        raise ValueError("project_slug is required — bridging is always scoped by project")
+        raise ValueError(
+            "project_slug is required — bridging is always scoped by project"
+        )
 
     active_rules = tuple(r for r in rules if r in ALL_RULES)
     if not active_rules:
@@ -372,12 +428,15 @@ def build_bridges(
             same_file_pairs: list[dict] = []
             if RULE_SAME_SOURCE_FILE in active_rules:
                 same_file_pairs = [
-                    row for row in _collect_same_source_file(session, project_slug)
+                    row
+                    for row in _collect_same_source_file(session, project_slug)
                     if (row["a_id"], row["b_id"]) not in already_hash_bridged
                 ]
             stats.pairs_same_source_file = len(same_file_pairs)
 
-            already_file_bridged = {(row["a_id"], row["b_id"]) for row in same_file_pairs}
+            already_file_bridged = {
+                (row["a_id"], row["b_id"]) for row in same_file_pairs
+            }
             already_file_bridged |= already_hash_bridged
 
             symbol_distinct: list[dict] = []
@@ -391,9 +450,11 @@ def build_bridges(
                         continue
                     label = row.get("label")
                     kind = row.get("kind") or ""
-                    bucket = symbol_distinct if (
-                        kind == "code" and not _is_generic_label(label)
-                    ) else symbol_generic
+                    bucket = (
+                        symbol_distinct
+                        if (kind == "code" and not _is_generic_label(label))
+                        else symbol_generic
+                    )
                     bucket.append(
                         {
                             "a_id": row["a_id"],
@@ -472,7 +533,5 @@ def build_bridges_all_projects(
 
     results: list[BridgeStats] = []
     for slug in list_graphify_projects():
-        results.append(
-            build_bridges(slug, rules=rules, clear_existing=clear_existing)
-        )
+        results.append(build_bridges(slug, rules=rules, clear_existing=clear_existing))
     return results

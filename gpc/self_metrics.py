@@ -18,15 +18,13 @@ can tell "Postgres fine, Neo4j down" apart from "collector never ran".
 
 from __future__ import annotations
 
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 from typing import Any
 
-import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
-from gpc.config import POSTGRES_DSN
-
+from gpc.db import pg_connection
 
 VALID_SOURCES = ("gpc-index", "graph-bridge", "manual", "snapshot")
 
@@ -54,7 +52,7 @@ def collect_metrics(
     project_id = pg.pop("_project_id", None)
     god_nodes = neo.get("god_nodes_top10", []) or []
 
-    with psycopg.connect(POSTGRES_DSN) as conn:
+    with pg_connection() as conn:
         row = conn.execute(
             """
             insert into gpc_self_metrics (
@@ -115,7 +113,7 @@ def collect_metrics(
 
 
 def _postgres_counts(project_slug: str) -> dict[str, Any]:
-    with psycopg.connect(POSTGRES_DSN, row_factory=dict_row) as conn:
+    with pg_connection(row_factory=dict_row) as conn:
         proj = conn.execute(
             "select id::text as id from gpc_projects where slug = %s",
             (project_slug,),
@@ -144,7 +142,9 @@ def _postgres_counts(project_slug: str) -> dict[str, Any]:
             "entities_count": int(row["entities_count"] or 0),
             "relations_count": int(row["relations_count"] or 0),
             "max_file_age_hours": (
-                int(row["max_file_age_hours"]) if row["max_file_age_hours"] is not None else None
+                int(row["max_file_age_hours"])
+                if row["max_file_age_hours"] is not None
+                else None
             ),
         }
 
@@ -160,12 +160,6 @@ def _neo4j_counts(project_slug: str) -> dict[str, Any]:
     try:
         with neo4j_driver() as driver:
             with driver.session() as session:
-                presence = session.run(
-                    "MATCH (p:GraphifyProject {slug: $s}) RETURN count(p) AS c",
-                    s=project_slug,
-                ).single()
-                has_project = bool(presence and presence["c"])
-
                 counts = session.run(
                     """
                     CALL () {
@@ -266,9 +260,15 @@ def _neo4j_counts(project_slug: str) -> dict[str, Any]:
             "graphify_projects": int(counts["graphify_projects"] or 0) if counts else 0,
             "graphify_repos": int(counts["graphify_repos"] or 0) if counts else 0,
             "graphify_nodes": int(counts["graphify_nodes"] or 0) if counts else 0,
-            "graphify_edges_same_repo": int(counts["graphify_edges_same_repo"] or 0) if counts else 0,
-            "graphify_edges_cross_repo": int(counts["graphify_edges_cross_repo"] or 0) if counts else 0,
-            "cross_repo_bridges": int(counts["cross_repo_bridges"] or 0) if counts else 0,
+            "graphify_edges_same_repo": (
+                int(counts["graphify_edges_same_repo"] or 0) if counts else 0
+            ),
+            "graphify_edges_cross_repo": (
+                int(counts["graphify_edges_cross_repo"] or 0) if counts else 0
+            ),
+            "cross_repo_bridges": (
+                int(counts["cross_repo_bridges"] or 0) if counts else 0
+            ),
             "extracted_count": conf["EXTRACTED"],
             "inferred_count": conf["INFERRED"],
             "ambiguous_count": conf["AMBIGUOUS"],
@@ -286,7 +286,7 @@ def list_snapshots(
     limit: int = 20,
 ) -> list[dict[str, Any]]:
     limit = max(1, min(int(limit), 500))
-    with psycopg.connect(POSTGRES_DSN, row_factory=dict_row) as conn:
+    with pg_connection(row_factory=dict_row) as conn:
         if project_slug:
             return conn.execute(
                 """
@@ -320,7 +320,7 @@ def list_snapshots(
 
 
 def fetch_snapshot(snapshot_id: str) -> dict[str, Any] | None:
-    with psycopg.connect(POSTGRES_DSN, row_factory=dict_row) as conn:
+    with pg_connection(row_factory=dict_row) as conn:
         return conn.execute(
             """
             select id::text as id, collected_at, project_slug, source,
@@ -352,7 +352,7 @@ def fetch_pair(
     defaults to 24.
     """
 
-    with psycopg.connect(POSTGRES_DSN, row_factory=dict_row) as conn:
+    with pg_connection(row_factory=dict_row) as conn:
         if from_id and to_id:
             a = conn.execute(
                 "select * from gpc_self_metrics where id = %s",

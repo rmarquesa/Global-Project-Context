@@ -20,14 +20,12 @@ is safe if one leg fails halfway through.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
 
-import psycopg
 from psycopg.rows import dict_row
-from qdrant_client import QdrantClient
 from qdrant_client.models import FieldCondition, Filter, MatchValue
 
-from gpc.config import COLLECTION_NAME, POSTGRES_DSN, QDRANT_HOST, QDRANT_PORT
+from gpc.db import get_qdrant, pg_connection
+from gpc.config import COLLECTION_NAME
 from gpc.registry import normalize_slug
 
 
@@ -107,7 +105,7 @@ def _rename_postgres(
     new_name: str | None,
     rename_default_repo: bool,
 ) -> None:
-    with psycopg.connect(POSTGRES_DSN, row_factory=dict_row) as conn:
+    with pg_connection(row_factory=dict_row) as conn:
         with conn.transaction():
             project = conn.execute(
                 "select id, slug, name, root_path from gpc_projects where slug = %s",
@@ -138,7 +136,9 @@ def _rename_postgres(
             virtual_root = f"virtual://gpc/projects/{stats.old_slug}"
             new_virtual_root = f"virtual://gpc/projects/{stats.new_slug}"
             new_root_path = (
-                new_virtual_root if project["root_path"] == virtual_root else project["root_path"]
+                new_virtual_root
+                if project["root_path"] == virtual_root
+                else project["root_path"]
             )
             conn.execute(
                 """
@@ -194,31 +194,42 @@ def _rename_postgres(
                         (stats.new_slug, repo["id"]),
                     )
                     stats.repos_renamed.append(
-                        {"old": repo["slug"], "new": stats.new_slug, "id": str(repo["id"])}
+                        {
+                            "old": repo["slug"],
+                            "new": stats.new_slug,
+                            "id": str(repo["id"]),
+                        }
                     )
 
             # Denormalised slug column on gpc_self_metrics.
-            updated = conn.execute(
-                """
+            updated = (
+                conn.execute(
+                    """
                 update gpc_self_metrics
                 set project_slug = %s
                 where project_id = %s and project_slug = %s
                 """,
-                (stats.new_slug, project["id"], stats.old_slug),
-            ).rowcount or 0
+                    (stats.new_slug, project["id"], stats.old_slug),
+                ).rowcount
+                or 0
+            )
             stats.self_metrics_rows = int(updated)
 
 
 def _rename_qdrant(stats: RenameStats) -> None:
     if not stats.project_updated:
         return
-    client = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT)
+    client = get_qdrant()
 
     # Count first so the stats reflect how many points were rewritten.
     count = client.count(
         collection_name=COLLECTION_NAME,
         count_filter=Filter(
-            must=[FieldCondition(key="project_slug", match=MatchValue(value=stats.old_slug))]
+            must=[
+                FieldCondition(
+                    key="project_slug", match=MatchValue(value=stats.old_slug)
+                )
+            ]
         ),
         exact=True,
     ).count
@@ -233,7 +244,11 @@ def _rename_qdrant(stats: RenameStats) -> None:
             "project_name": stats.project_name,
         },
         points=Filter(
-            must=[FieldCondition(key="project_slug", match=MatchValue(value=stats.old_slug))]
+            must=[
+                FieldCondition(
+                    key="project_slug", match=MatchValue(value=stats.old_slug)
+                )
+            ]
         ),
         wait=True,
     )
@@ -264,7 +279,8 @@ def _rename_neo4j(stats: RenameStats) -> None:
                     SET n.{prop} = $new
                     RETURN count(n) AS c
                     """,
-                    old=stats.old_slug, new=stats.new_slug,
+                    old=stats.old_slug,
+                    new=stats.new_slug,
                 ).single()
                 total_nodes += int(record["c"] or 0) if record else 0
             stats.neo4j_nodes_updated = total_nodes
@@ -314,7 +330,8 @@ def _rename_neo4j(stats: RenameStats) -> None:
                 SET r.project_slug = $new
                 RETURN count(r) AS c
                 """,
-                old=stats.old_slug, new=stats.new_slug,
+                old=stats.old_slug,
+                new=stats.new_slug,
             ).single()
             stats.neo4j_edges_updated = int(rels["c"] or 0) if rels else 0
 
@@ -329,7 +346,8 @@ def _rename_neo4j(stats: RenameStats) -> None:
                 SET r.project_slug = $new
                 RETURN count(r) AS c
                 """,
-                old=stats.old_slug, new=stats.new_slug,
+                old=stats.old_slug,
+                new=stats.new_slug,
             ).single()
             if more:
                 stats.neo4j_edges_updated += int(more["c"] or 0)

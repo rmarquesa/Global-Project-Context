@@ -22,6 +22,14 @@ aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   embedding-cache logic — runnable in CI without live services.
 - CI now runs the unit test suite (`pytest`, excluding live-service smoke tests).
 - `gpc/__init__.py` now exposes `__version__`.
+- Connection reuse extended to the remaining functional modules (indexer,
+  self_metrics, drift, cross_repo, maintenance, retention, staleness,
+  entity_extractor, project rename/delete, reset, CLI). Diagnostic paths
+  (`gpc_health`, `gpc verify`) keep fresh connections for honest fail-fast.
+- `gpc doctor` now reports a `credentials` check (default secrets on non-local
+  hosts).
+- `gpc_mcp_usage` now returns a live `embedding_cache` block (hits, misses,
+  hit-rate) for the running server process.
 
 ### Fixed
 - MCP tool names changed from `gpc.X` to `gpc_X` so Claude Desktop accepts them
