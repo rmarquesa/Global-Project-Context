@@ -95,9 +95,6 @@ jobs:
       GPC_OLLAMA_EMBEDDING_MODEL: nomic-embed-text:latest
       # CPU-only embedding on CI runners is slow; give each request ample time.
       GPC_OLLAMA_TIMEOUT_SECONDS: "300"
-      # run_smoke_tests.sh defaults to ./venv/bin/python, which CI does not
-      # create — point it at the setup-python interpreter on PATH instead.
-      PYTHON_BIN: python
 
     services:
       postgres:
@@ -179,4 +176,7 @@ jobs:
           python -m gpc.cli index . --slug gpc --limit-files 40 --batch-size 4
 
       - name: Run smoke suite
-        run: bash scripts/run_smoke_tests.sh
+        # run_smoke_tests.sh defaults PYTHON_BIN to ./venv/bin/python and checks
+        # it with `[ -x ]`, which needs an absolute path (not a PATH lookup).
+        # CI has no venv, so point it at the setup-python interpreter.
+        run: PYTHON_BIN="$(command -v python)" bash scripts/run_smoke_tests.sh
