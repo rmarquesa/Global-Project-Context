@@ -33,6 +33,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "black==26.3.1",
+    "mypy==1.18.2",
     "pytest==9.0.3",
     "ruff==0.15.12",
 ]
@@ -62,3 +63,18 @@ testpaths = ["tests"]
 # Smoke tests require live Postgres/Qdrant/Neo4j/Ollama; exclude them from the
 # default (CI) run. Invoke them explicitly with `pytest tests/smoke`.
 addopts = "--ignore=tests/smoke"
+
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true
+# Report errors only in the curated, well-typed modules below; silence noise
+# from imported legacy modules. This is a ratchet: add modules here as they are
+# typed, rather than blocking CI on the whole legacy surface at once.
+follow_imports = "silent"
+files = [
+    "gpc/__init__.py",
+    "gpc/config.py",
+    "gpc/db.py",
+    "gpc/embeddings.py",
+    "gpc/graph_query.py",
+]

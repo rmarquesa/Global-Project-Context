@@ -67,7 +67,105 @@ jobs:
             echo "No changed Python files."
           fi
 
+      - name: Type-check curated modules
+        # Scoped to the well-typed modules listed in pyproject [tool.mypy]; a
+        # ratchet rather than a full-codebase gate.
+        run: python -m mypy
+
       - name: Run unit tests
         # Smoke tests need live Postgres/Qdrant/Neo4j/Ollama and are excluded via
         # pyproject's addopts (--ignore=tests/smoke).
         run: python -m pytest
+
+  integration:
+    # Brings up the real backing stores and runs the live smoke suite. Slower
+    # than `quality` (it pulls an Ollama model), so it runs as a separate job.
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    env:
+      GPC_POSTGRES_DSN: postgresql://gpc:gpcpass@localhost:5432/gpc
+      GPC_QDRANT_HOST: localhost
+      GPC_QDRANT_PORT: "6333"
+      GPC_NEO4J_URI: bolt://localhost:7687
+      GPC_NEO4J_USER: neo4j
+      GPC_NEO4J_PASSWORD: gpcneo4jpass
+      GPC_OLLAMA_HOST: http://localhost:11434
+      GPC_OLLAMA_EMBEDDING_MODEL: nomic-embed-text:latest
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: gpc
+          POSTGRES_PASSWORD: gpcpass
+          POSTGRES_DB: gpc
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U gpc -d gpc"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      qdrant:
+        image: qdrant/qdrant
+        ports:
+          - 6333:6333
+      neo4j:
+        image: neo4j:5-community
+        env:
+          NEO4J_AUTH: neo4j/gpcneo4jpass
+        ports:
+          - 7687:7687
+          - 7474:7474
+        options: >-
+          --health-cmd "cypher-shell -u neo4j -p gpcneo4jpass 'RETURN 1' || exit 1"
+          --health-interval 10s
+          --health-timeout 10s
+          --health-retries 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Wait for Qdrant
+        # The Qdrant image has no shell for a container health check, so probe
+        # its readiness endpoint from the runner.
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:6333/readyz; then echo; echo "qdrant ready"; exit 0; fi
+            sleep 2
+          done
+          echo "qdrant did not become ready" >&2
+          exit 1
+
+      - name: Install and start Ollama
+        run: |
+          curl -fsSL https://ollama.com/install.sh | sh
+          nohup ollama serve > ollama.log 2>&1 &
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:11434/api/version; then echo; echo "ollama ready"; break; fi
+            sleep 2
+          done
+          ollama pull nomic-embed-text
+
+      - name: Bootstrap schema, collection and index
+        run: |
+          python -m scripts.migrate up
+          python -m scripts.init_qdrant
+          # Register + index this repo as project "gpc" so the smoke suite has
+          # chunks to retrieve. Graph smoke tests seed their own Neo4j data.
+          python -m gpc.cli index . --slug gpc
+
+      - name: Run smoke suite
+        run: bash scripts/run_smoke_tests.sh

@@ -21,6 +21,10 @@ aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Unit tests for `registry`, `search`, `graph_query`, and the new credential and
   embedding-cache logic — runnable in CI without live services.
 - CI now runs the unit test suite (`pytest`, excluding live-service smoke tests).
+- CI `integration` job brings up Postgres, Qdrant, Neo4j and Ollama, bootstraps
+  the schema/collection/index, and runs the full live smoke suite.
+- mypy type-checking in CI, scoped to a curated allowlist of typed modules
+  (`gpc/__init__`, `config`, `db`, `embeddings`, `graph_query`) as a ratchet.
 - `gpc/__init__.py` now exposes `__version__`.
 - Connection reuse extended to the remaining functional modules (indexer,
   self_metrics, drift, cross_repo, maintenance, retention, staleness,

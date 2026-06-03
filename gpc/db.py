@@ -41,7 +41,7 @@ from gpc.config import (
 try:  # Optional dependency — degrade gracefully to direct connections.
     from psycopg_pool import ConnectionPool
 except ImportError:  # pragma: no cover - exercised only on older installs
-    ConnectionPool = None  # type: ignore[assignment]
+    ConnectionPool = None  # type: ignore[assignment,misc]
 
 
 class Neo4jDependencyError(RuntimeError):
