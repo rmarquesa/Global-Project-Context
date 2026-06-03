@@ -93,6 +93,8 @@ jobs:
       GPC_NEO4J_PASSWORD: gpcneo4jpass
       GPC_OLLAMA_HOST: http://localhost:11434
       GPC_OLLAMA_EMBEDDING_MODEL: nomic-embed-text:latest
+      # CPU-only embedding on CI runners is slow; give each request ample time.
+      GPC_OLLAMA_TIMEOUT_SECONDS: "300"
 
     services:
       postgres:
@@ -170,7 +172,8 @@ jobs:
           # too slow for CI, and the first ~40 files (README + docs/) already
           # cover the smoke queries. git ls-files order puts README at #15 and
           # docs/architecture.md at #18.
-          python -m gpc.cli index . --slug gpc --limit-files 40
+          # Small batches keep each CPU embedding request well under the timeout.
+          python -m gpc.cli index . --slug gpc --limit-files 40 --batch-size 4
 
       - name: Run smoke suite
         run: bash scripts/run_smoke_tests.sh
