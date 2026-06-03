@@ -49,8 +49,9 @@ The reusable implementation lives under `gpc/`.
 | Module | Responsibility |
 |---|---|
 | `gpc/cli.py` | Public command surface; hook installer and shim installer. |
-| `gpc/config.py` | Central configuration and `.env` loading. |
-| `gpc/embeddings.py` | Local Ollama embedding adapter. |
+| `gpc/config.py` | Central configuration, `.env` loading, and credential guard. |
+| `gpc/db.py` | Shared long-lived backing-store handles: pooled Postgres connection, singleton Qdrant client, singleton Neo4j driver. |
+| `gpc/embeddings.py` | Local Ollama embedding adapter with a per-query LRU cache. |
 | `gpc/registry.py` | Project / source registry and resolver. |
 | `gpc/indexer.py` | File discovery, chunking, embeddings, Postgres and Qdrant writes. |
 | `gpc/search.py` | Semantic search over Qdrant with Postgres hydration. |
@@ -145,4 +146,7 @@ The repository root stays focused on project-level assets:
 | `install.sh` | One-shot installer. |
 | `gpc_mcp_server.py` | Stable MCP entrypoint wrapper. |
 | `mcp_config.example.json` | MCP client configuration template. |
-| `requirements.txt` | Python dependencies. |
+| `pyproject.toml` | Packaging metadata and canonical Black / Ruff / mypy / pytest config. |
+| `requirements.txt` | Version-bounded runtime dependencies. |
+| `requirements-dev.txt` | Dev/test/lint dependencies (black, ruff, mypy, pytest). |
+| `CHANGELOG.md` | Release notes. |

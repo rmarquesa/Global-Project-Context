@@ -255,6 +255,26 @@ The current server exposes seventeen read-only tools across five surfaces:
 Tool inputs, semantics and client setup are documented in
 [mcp-clients.md](mcp-clients.md).
 
+## Connection model
+
+The MCP server is a long-lived process that answers many tool calls, so it
+reuses backing-store handles instead of opening fresh ones per call. `gpc/db.py`
+centralizes three shared handles, all created lazily on first use and closed at
+interpreter exit:
+
+- a **pooled Postgres connection** (`psycopg_pool`), sized by
+  `GPC_PG_POOL_MAX_SIZE` / `GPC_PG_POOL_TIMEOUT`. It never pre-opens connections
+  and falls back to a direct connection when `psycopg_pool` is not installed;
+- a process-wide **Qdrant client** singleton;
+- a process-wide **Neo4j driver** singleton (`neo4j_driver()` is a context
+  manager that yields the shared driver rather than opening a new one).
+
+Diagnostic paths deliberately bypass the pool and open fresh connections, so a
+health probe reflects real reachability rather than a cached handle: the
+`gpc_health` MCP tool and the `gpc verify` CLI command. Query embeddings are
+cached per process (`GPC_EMBEDDING_CACHE_SIZE`); the live hit-rate is reported
+by `gpc_mcp_usage`.
+
 ## See Also
 
 - [Operations](operations.md) — install, validate, reset, index.

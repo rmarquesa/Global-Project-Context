@@ -95,6 +95,12 @@ GPC_NEO4J_PASSWORD=gpcneo4jpass
 Change them before running GPC on a shared machine, and never reuse them on
 production-facing infrastructure.
 
+GPC helps enforce this: at MCP server startup and in `gpc doctor`, it emits a
+warning when the shipped default Postgres or Neo4j password is used against a
+**non-local** host. Set `GPC_STRICT_CREDENTIALS=1` to turn that warning into a
+hard failure (the server refuses to start). Local development against
+`localhost` is unaffected.
+
 ### Reviewing what was indexed
 
 Before sharing a project's GPC index (for example by copying volumes or
@@ -114,8 +120,9 @@ gpc-index /path/to/project --slug <slug> --reset
 
 ### Dependencies
 
-GPC pins its Python dependencies in `requirements.txt`. The Docker compose
-file pulls upstream service images. Subscribe to advisories for:
+GPC version-bounds its Python dependencies in `requirements.txt`; the canonical
+dependency list and tooling configuration live in `pyproject.toml`. The Docker
+compose file pulls upstream service images. Subscribe to advisories for:
 
 - [Postgres](https://www.postgresql.org/support/security/) (with `pgvector`).
 - [Qdrant](https://github.com/qdrant/qdrant/security/advisories).

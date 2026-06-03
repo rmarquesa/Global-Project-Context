@@ -32,7 +32,7 @@ the contact channel).
 
 ### Prerequisites
 
-- Python 3.12 or newer.
+- Python 3.10 or newer.
 - Docker and Docker Compose.
 - A local [Ollama](https://ollama.com) installation with the
   `nomic-embed-text` model pulled.
@@ -49,8 +49,9 @@ cp .env.example .env
 
 `--skip-clients` avoids touching your real Codex/Claude/Copilot configurations
 during development. Drop the flag once you want to validate end-to-end with a
-real client. `requirements-dev.txt` installs the documented formatter, linter,
-CI quality tools and local test runner.
+real client. `requirements-dev.txt` installs the formatter (`black`), linter
+(`ruff`), type checker (`mypy`) and test runner (`pytest`). Tooling
+configuration is centralized in `pyproject.toml`.
 
 ### Verify the environment
 
@@ -59,11 +60,14 @@ gpc doctor
 ./scripts/run_smoke_tests.sh
 ```
 
-For quality checks that do not require live services:
+For quality checks that do not require live services (this mirrors the CI
+`quality` job):
 
 ```bash
 ./venv/bin/python -m compileall -q gpc scripts tests
 ./venv/bin/python -m ruff check --select E9,F63,F7,F82 gpc scripts tests
+./venv/bin/python -m mypy          # curated modules per pyproject [tool.mypy]
+./venv/bin/python -m pytest        # unit suite; tests/smoke excluded via addopts
 changed_py=$(git diff --name-only origin/main...HEAD -- '*.py')
 if [ -n "$changed_py" ]; then
   printf '%s\n' "$changed_py" | xargs ./venv/bin/python -m ruff check
@@ -71,7 +75,8 @@ if [ -n "$changed_py" ]; then
 fi
 ```
 
-The smoke script should report success against the local Docker services and Ollama.
+The unit suite is hermetic (no live services). The smoke script (below) should
+report success against the local Docker services and Ollama.
 
 ## Project Layout
 
@@ -94,7 +99,11 @@ A more detailed inventory lives in [docs/scripts.md](docs/scripts.md).
   defaults (line length 88, double quotes).
 - **Linter**: code should pass [Ruff](https://docs.astral.sh/ruff/) with the
   default ruleset.
-- **Type hints**: required on public functions in the `gpc/` package.
+- **Types**: required on public functions in the `gpc/` package. The curated
+  modules listed in `pyproject.toml` `[tool.mypy]` must pass `mypy`; add modules
+  to that list as they are typed.
+- **Config**: `pyproject.toml` is the canonical source for Black, Ruff, mypy and
+  pytest settings.
 - **Imports**: standard library first, third-party second, local last; one blank
   line between groups.
 - **Docstrings**: short imperative summary; only add longer prose when the
@@ -105,6 +114,8 @@ Run before committing:
 ```bash
 ./venv/bin/python -m compileall -q gpc scripts tests
 ./venv/bin/python -m ruff check --select E9,F63,F7,F82 gpc scripts tests
+./venv/bin/python -m mypy
+./venv/bin/python -m pytest
 changed_py=$(git diff --name-only origin/main...HEAD -- '*.py')
 if [ -n "$changed_py" ]; then
   printf '%s\n' "$changed_py" | xargs ./venv/bin/python -m ruff check
@@ -114,8 +125,16 @@ fi
 
 ## Testing
 
-GPC ships smoke tests rather than unit tests because most behaviour depends on
-real Postgres, Qdrant, Ollama and Neo4j services.
+GPC has two test layers:
+
+- **Unit tests** (`tests/test_*.py`) — hermetic, no live services. Run with
+  `./venv/bin/python -m pytest`. `pyproject.toml` excludes `tests/smoke` from the
+  default run via `addopts`, and CI runs this suite in the `quality` job. Keep
+  new unit tests free of network/database access (mock or pass values in).
+- **Smoke tests** (`tests/smoke/`) — end-to-end against live Postgres, Qdrant,
+  Ollama and Neo4j. Run with `./scripts/run_smoke_tests.sh` (or
+  `./venv/bin/python -m pytest tests/smoke` for the pytest-style ones). CI runs
+  these in a dedicated `integration` job that boots the services in containers.
 
 | Test | Validates |
 |---|---|
@@ -127,7 +146,8 @@ real Postgres, Qdrant, Ollama and Neo4j services.
 | `tests.smoke.mcp_observability_smoke_test` | MCP call logging and usage reporting work. |
 | `tests.smoke.mcp_smoke_test` | The MCP server exposes the expected tools over stdio. |
 
-Add a new smoke test when introducing or changing:
+Add a unit test for pure logic (parsing, filtering, budgeting, validation). Add
+or extend a smoke test when introducing or changing:
 
 - An MCP tool's input/output shape.
 - The indexer's discovery or chunking rules.

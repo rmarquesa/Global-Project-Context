@@ -69,7 +69,8 @@ admin modules live under `scripts/`. Smoke tests live under `tests/smoke/`.
 - [Roadmap](docs/roadmap.md) — planned MCP graph tools, multi-project audit, and auto-research loop.
 
 Contributor and security notes live in [CONTRIBUTING.md](CONTRIBUTING.md) and
-[SECURITY.md](SECURITY.md). Landing page source lives in [site/](site/).
+[SECURITY.md](SECURITY.md). Release notes are in [CHANGELOG.md](CHANGELOG.md).
+Landing page source lives in [site/](site/).
 
 ## Stack
 
@@ -187,7 +188,7 @@ the reasoning work performed after the context is retrieved.
 
 Install these first:
 
-- Python 3.12 or newer.
+- Python 3.10 or newer.
 - Docker and Docker Compose.
 - Ollama running on the host machine.
 - Git.
@@ -221,8 +222,11 @@ GPC_QDRANT_GRPC_PORT=6334
 GPC_OLLAMA_HOST=http://localhost:11434
 GPC_OLLAMA_EMBEDDING_MODEL=nomic-embed-text:latest
 GPC_VECTOR_SIZE=0
+GPC_EMBEDDING_CACHE_SIZE=256
 
 GPC_POSTGRES_DSN=postgresql://gpc:gpcpass@localhost:5433/gpc
+GPC_PG_POOL_MAX_SIZE=8
+GPC_PG_POOL_TIMEOUT=10
 
 GPC_NEO4J_URI=bolt://localhost:7687
 GPC_NEO4J_USER=neo4j
@@ -240,6 +244,9 @@ GPC_GRAFANA_ADMIN_PASSWORD=gpcgrafanapass
 ```
 
 For shared machines, change the default passwords before starting services.
+GPC warns on startup and in `gpc doctor` when default Postgres/Neo4j passwords
+are used against a non-local host, and refuses to start when
+`GPC_STRICT_CREDENTIALS=1`.
 
 ### 3. Install GPC
 

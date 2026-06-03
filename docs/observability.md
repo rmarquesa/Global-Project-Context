@@ -63,6 +63,12 @@ The telemetry path is best-effort. If Postgres is unavailable, or the migration
 has not been applied yet, the MCP call still returns normally and the logger
 prints a warning to stderr.
 
+In addition to the Postgres-backed log, `gpc_mcp_usage` returns a process-local
+`embedding_cache` block (`enabled`, `hits`, `misses`, `hit_rate`, `currsize`,
+`maxsize`) for the running server. This is an in-memory signal, not a stored
+metric — it resets when the server restarts and reflects only the current
+process.
+
 ## Apply Migration
 
 Existing installations need the new table:

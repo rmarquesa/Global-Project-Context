@@ -29,7 +29,7 @@ The server exposes seventeen read-only tools.
 | `gpc_self_metrics` | List recent ``gpc_self_metrics`` snapshots for a project; optionally collect a fresh one first. | `cwd`/`project`, `limit`, `collect`, `source` |
 | `gpc_graph_diff` | Diff two metric snapshots: numeric deltas, god-node churn, confidence-distribution shift. | `cwd`/`project`, `window_hours`, `from_id`, `to_id` |
 | `gpc_drift_signals` | List stored drift signals; optionally detect and persist fresh rule-based signals from the latest metric snapshots. | `cwd`/`project`, `window_hours`, `detect`, `persist`, `limit` |
-| `gpc_mcp_usage` | Aggregates the server's own call log. Use it to confirm AI clients are actually hitting GPC. | `window_hours`, `cwd`/`project` |
+| `gpc_mcp_usage` | Aggregates the server's own call log, plus live per-process embedding-cache stats. Use it to confirm AI clients are actually hitting GPC. | `window_hours`, `cwd`/`project` |
 
 **Project resolution**. Every tool accepts either `project` (a registered slug
 or alias) or `cwd` (the active repository path). Pass `project` when you
@@ -50,7 +50,7 @@ the raw matches with relevance scores instead.
 
 **Semantic vs. structural**. `gpc_search` / `gpc_context` answer "what looks
 like this?" — they return text chunks ranked by embedding similarity. The
-`gpc.graph_*` tools answer "what connects to this?" — they read the Neo4j
+`gpc_graph_*` tools answer "what connects to this?" — they read the Neo4j
 projection and return nodes and typed edges (calls, imports, cross-repo
 bridges). Use them together: `graph_summary` to orient on the project,
 `graph_neighbors` to discover callers and dependencies, `graph_path` to trace
@@ -81,9 +81,15 @@ Use `gpc_mcp_usage` to see the aggregate without opening a SQL client:
   "totals": { "total": 147, "ok": 145, "failed": 2, "distinct_clients": 2 },
   "by_tool":   [ { "tool": "gpc_search",  "calls": 63, "errors": 0, "avg_ms": 480 } ],
   "by_client": [ { "client": "claude",    "calls": 110 } ],
-  "by_project":[ { "project": "alugafacil","calls": 120 } ]
+  "by_project":[ { "project": "alugafacil","calls": 120 } ],
+  "embedding_cache": { "enabled": true, "hits": 41, "misses": 22, "hit_rate": 0.6508, "currsize": 22, "maxsize": 256 }
 }
 ```
+
+The `embedding_cache` block is process-local: it reflects the per-query
+embedding cache of the running MCP server (see `GPC_EMBEDDING_CACHE_SIZE`), not
+a historical database aggregate. A high `hit_rate` means repeated queries are
+served without re-embedding through Ollama.
 
 For finer-grained audits, query the table directly:
 

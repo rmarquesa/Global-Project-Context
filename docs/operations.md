@@ -5,7 +5,7 @@ validating, indexing projects, and resetting state when needed.
 
 ## Prerequisites
 
-- Python 3.12 or newer.
+- Python 3.10 or newer.
 - Docker and Docker Compose.
 - A local [Ollama](https://ollama.com) installation reachable at
   `http://localhost:11434`.
@@ -57,7 +57,9 @@ gpc verify --project project-slug
 gpc install-clients --validate-only
 ```
 
-Use `gpc doctor` for workstation dependency checks. Use `gpc verify` when a
+Use `gpc doctor` for workstation dependency checks. Alongside the service
+probes it reports a `credentials` check that fails when default Postgres/Neo4j
+passwords are used against a non-local host. Use `gpc verify` when a
 specific project should have usable context; it checks project resolution, index
 state, Graphify files, and live local services. Add `--quick` to skip live
 service probes and `--json` for automation.
