@@ -16,7 +16,11 @@ def test_compute_search_eval_counts_expected_path_hits() -> None:
         "registry": ["gpc/cli.py", "gpc/registry.py"],
     }
 
-    report = compute_search_eval(cases, results_by_query=results_by_query, k=2)
+    # Pass dimensions explicitly so the report doesn't probe Ollama for the
+    # embedding dimension — this test only exercises the counting logic.
+    report = compute_search_eval(
+        cases, results_by_query=results_by_query, k=2, dimensions=768
+    )
 
     assert report.summary["queries"] == 2
     assert report.summary["expected_paths"] == 3
@@ -28,7 +32,9 @@ def test_compute_search_eval_counts_expected_path_hits() -> None:
 def test_compute_search_eval_marks_query_with_no_results_as_missing() -> None:
     cases = [SearchEvalCase(query="missing", expected_paths=["README.md"])]
 
-    report = compute_search_eval(cases, results_by_query={"missing": []}, k=5)
+    report = compute_search_eval(
+        cases, results_by_query={"missing": []}, k=5, dimensions=768
+    )
 
     assert report.summary["hits"] == 0
     assert report.results[0].hit_paths == []
