@@ -79,9 +79,10 @@ jobs:
 
   integration:
     # Brings up the real backing stores and runs the live smoke suite. Slower
-    # than `quality` (it pulls an Ollama model), so it runs as a separate job.
+    # than `quality` (it pulls an Ollama model and embeds on CPU), so it runs as
+    # a separate job.
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
 
     env:
       GPC_POSTGRES_DSN: postgresql://gpc:gpcpass@localhost:5432/gpc
@@ -165,7 +166,11 @@ jobs:
           python -m scripts.init_qdrant
           # Register + index this repo as project "gpc" so the smoke suite has
           # chunks to retrieve. Graph smoke tests seed their own Neo4j data.
-          python -m gpc.cli index . --slug gpc
+          # Bound the file count: CPU-only Ollama embedding of the whole repo is
+          # too slow for CI, and the first ~40 files (README + docs/) already
+          # cover the smoke queries. git ls-files order puts README at #15 and
+          # docs/architecture.md at #18.
+          python -m gpc.cli index . --slug gpc --limit-files 40
 
       - name: Run smoke suite
         run: bash scripts/run_smoke_tests.sh
