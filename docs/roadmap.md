@@ -475,8 +475,11 @@ Rodar periodicamente (cron ou `/loop`) um agente que:
 4. Nunca abre PR automaticamente. Nunca modifica código. Só escreve a
    proposta.
 
-Arquivo novo: `scripts/auto_research.py`. Agendamento via
-`graphify schedule` ou cron externo.
+**Implementado em 2026-09-17.** [scripts/auto_research.py](../scripts/auto_research.py)
+gera uma proposta Markdown por projeto a partir de `gpc_drift_signals` e
+`gpc_self_metrics`; não modifica código e não abre PRs. O módulo
+[gpc/auto_research.py](../gpc/auto_research.py) torna a renderização testável.
+Agendamento recomendado via cron externo (ver [operations.md](operations.md)).
 
 ### 3.4 Portfólio de testes derivados do grafo
 
@@ -498,7 +501,8 @@ para `gpc/` passa por PR humano com `tests/smoke/` verde.
 ### Prontidão da fase
 
 - [ ] `gpc_self_metrics` popula após cada run por pelo menos 2 semanas.
-- [ ] Primeiro `docs/proposals/` gerado automaticamente.
+- [x] Primeiro `docs/proposals/` gerado automaticamente — ferramenta
+  `scripts/auto_research.py` validada em 2026-09-17.
 - [ ] Pelo menos uma proposta promovida a PR + merge após revisão humana,
   provando o loop fim-a-fim.
 

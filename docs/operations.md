@@ -252,6 +252,22 @@ The underlying command is also available directly:
 gpc metrics collect-all --json
 ```
 
+## Auto-Research Proposals
+
+Generate advisory Markdown proposals from unresolved drift signals and recent
+self-metrics. This command never changes source code or opens a pull request:
+
+```bash
+.venv/bin/python scripts/auto_research.py --all
+```
+
+The output is written to `docs/proposals/YYYY-MM-DD-<project>-<signal>.md`.
+To schedule it after the weekly metrics collection, add a separate cron entry:
+
+```cron
+15 6 * * 1 cd /path/to/Global-Project-Context && .venv/bin/python scripts/auto_research.py --all >> /var/log/gpc-auto-research.log 2>&1
+```
+
 ## Reset Local State
 
 Drop everything and rebuild from scratch:

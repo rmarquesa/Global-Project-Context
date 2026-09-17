@@ -32,6 +32,7 @@ smoke_tests=(
   tests.smoke.maintenance_smoke_test
   tests.smoke.graph_quality_smoke_test
   tests.smoke.self_metrics_smoke_test
+  tests.smoke.drift_smoke_test
   tests.smoke.mcp_observability_smoke_test
   tests.smoke.mcp_smoke_test
 )
