@@ -511,7 +511,16 @@ Gerar testes smoke a partir da topologia:
 Rodada ao vivo em 2026-09-17 contra `gpc-local-verify`: 158 chamadas
 externas checadas (132 cobertas), 94 `rationale_for` checados (0 dangling),
 26 gaps — todos concentrados em `scripts/install_mcp_clients.py`, que ainda
-não tem teste dedicado.
+não tinha teste dedicado. Corrigido no mesmo dia: adicionado
+[tests/test_install_mcp_clients.py](../tests/test_install_mcp_clients.py)
+(58 testes unitários cobrindo dispatch de clientes, manipulação de
+config JSON, backup de arquivos e o fluxo de `main()`, tudo isolado do
+filesystem/CLIs reais via `tmp_path`/`monkeypatch`). Rerodando o
+portfólio após sincronizar o Graphify atualizado: 175 chamadas externas
+checadas (155 cobertas), gap count caiu de 26 para 20 (nenhum mais em
+`scripts/install_mcp_clients.py`; os 20 restantes estão em
+`gpc/reset.py`, `gpc/status.py`, `gpc/token_economy.py`,
+`scripts/auto_research.py` e `scripts/migrate.py`).
 
 ### 3.5 Sandbox de experimentação
 
