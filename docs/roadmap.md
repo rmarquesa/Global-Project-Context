@@ -331,11 +331,15 @@ Próximas evoluções naturais (ficam na Fase 2):
       alugafacil ainda não captura sinal porque cada worker tem sua própria
       implementação de `crypto.js`; fica útil quando há vendoring bit-a-bit.
 
-## Fase 2 — Multi-projeto (Cloudflare backend + frontend + database)
+## Fase 2 — Multi-projeto (onboarding de projetos reais adicionais)
 
 **Objetivo.** Validar GPC com 3 projetos reais e descobrir gaps antes de
-escalar. Backend Cloudflare com muitos workers é o caso mais exigente porque
-mistura muitos repos pequenos sob um `project_slug` comum.
+escalar. Não teremos um backend Cloudflare próprio para isso — o caso mais
+exigente (muitos repos pequenos sob um `project_slug` comum, como visto
+historicamente em [docs/audit-2026-04-26-alugafacil.md](audit-2026-04-26-alugafacil.md))
+segue como referência de cenário difícil, mas os projetos reais que vão
+compor a Fase 2 ainda precisam ser escolhidos entre os projetos disponíveis
+no momento do onboarding — não há mais um alvo fixo de stack.
 
 ### 2.1 Checklist por projeto onboardado
 
@@ -356,35 +360,40 @@ Rodar, em ordem, para cada novo projeto antes de declarar "indexado":
 - [ ] `gpc_graph_summary` (Fase 1) lista god nodes que fazem sentido para um
   humano do projeto
 
-### 2.2 Consolidação Cloudflare workers
+### 2.2 Consolidação multi-repo
 
-Cloudflare backend com N workers é o teste de estresse para consolidação
+Qualquer projeto real que agrupe muitos repositórios pequenos sob um único
+`project_slug` (o antigo caso Cloudflare é só um exemplo desse padrão, não
+mais um alvo específico) serve de teste de estresse para consolidação
 cross-repo ([docs/graphify.md:50-52](graphify.md#L50-L52)).
 
 O mecanismo de consolidação foi validado sinteticamente em 2026-09-17 via
 `tests/test_multi_repo_graph_path.py` e `tests/test_graphify_freshness.py`
 (dois repos sintéticos `worker-a`/`worker-b` sob um mesmo `project_slug`,
 contrato compartilhado, bridge automática e medição de lag). Falta apenas
-aplicar o mesmo processo a um backend Cloudflare real com N workers.
+aplicar o mesmo processo a um projeto real com múltiplos repos — qual
+projeto ainda está em aberto, já que não há mais um backend Cloudflare
+específico reservado para isso.
 
-- [ ] Escolher `project_slug` comum (ex. `cf-backend`) e `repo_slug` por worker
-  num backend Cloudflare real.
+- [ ] Escolher, entre os projetos reais disponíveis, um que agrupe múltiplos
+  repositórios sob um `project_slug` comum e definir o `repo_slug` de cada um.
 - [x] Validar que nós Graphify usam IDs estáveis
   `<project_slug>:<repo_slug>:<graphify_node_id>` — confirmado via
   `gpc/graphify_freshness.py` + `tests/test_multi_repo_graph_path.py`.
-- [x] Rodar `gpc_graph_path` entre dois workers que compartilham um contrato
+- [x] Rodar `gpc_graph_path` entre dois repos que compartilham um contrato
   — resultado esperado: caminho curto passando pelo símbolo compartilhado.
   Confirmado sinteticamente: caminho curto via `CROSS_REPO_BRIDGE` +
   `GRAPHIFY_RELATION`.
 - [x] Medir freshness lag: tempo entre sync Graphify e disponibilidade no
   Neo4j — utilitário `gpc/graphify_freshness.py` (`measure_sync_freshness`),
   lag medido localmente em ~0.0017s. Falta medir o lag real
-  commit→Neo4j num pipeline de produção (depende do post-commit hook real).
+  commit→Neo4j num pipeline de produção real (depende de qual projeto for
+  escolhido e de ter o post-commit hook instalado nele).
 
 ### 2.3 Auditoria cross-projeto
 
-Depois de indexar backend/frontend/database, rodar uma passagem de análise
-com o próprio GPC (dogfooding):
+Depois de indexar os projetos reais adicionais escolhidos para a fase, rodar
+uma passagem de análise com o próprio GPC (dogfooding):
 
 A ferramenta de auditoria foi implementada e validada em 2026-09-17
 (`gpc/cross_project_audit.py`, comando `gpc audit cross-project`). Rodada
