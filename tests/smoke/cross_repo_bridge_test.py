@@ -14,6 +14,7 @@ from contextlib import contextmanager
 
 from gpc.cross_repo import (
     ALL_RULES,
+    RULE_PACKAGE_IMPORT,
     RULE_SAME_CODE_SYMBOL,
     RULE_SAME_GENERIC_SYMBOL,
     RULE_SAME_SOURCE_FILE,
@@ -41,6 +42,25 @@ SEED_NODES: list[dict] = [
         "label": "computeAuthSignature()",
         "file_type": "code",
         "source_file": "src/auth.js",
+    },
+    # Explicit package/module identity → package_import (EXTRACTED).
+    {
+        "repo": "repo_a",
+        "source_id": "pkg_http_client",
+        "label": "Transport",
+        "file_type": "code",
+        "source_file": "vendor/client.js",
+        "package_name": "acme-platform",
+        "module_path": "http/transport",
+    },
+    {
+        "repo": "repo_b",
+        "source_id": "pkg_http_client",
+        "label": "Transport",
+        "file_type": "code",
+        "source_file": "lib/client.ts",
+        "package_name": "acme-platform",
+        "module_path": "http/transport",
     },
     # Same source_file relative path → same_source_file (stronger than same_code_symbol)
     {
@@ -117,6 +137,8 @@ def _seed() -> None:
                         n.norm_label = $label,
                         n.file_type = $file_type,
                         n.source_file = $source_file,
+                        n.package_name = $package_name,
+                        n.module_path = $module_path,
                         n.source = 'graphify',
                         n.updated_at = datetime()
                     MERGE (r)-[:HAS_GRAPH_NODE]->(n)
@@ -129,6 +151,8 @@ def _seed() -> None:
                     label=node["label"],
                     file_type=node["file_type"],
                     source_file=node["source_file"],
+                    package_name=node.get("package_name"),
+                    module_path=node.get("module_path"),
                 )
 
 
@@ -243,6 +267,26 @@ def _count_bridges(rule: str | None = None) -> int:
     return int(record["c"]) if record else 0
 
 
+def _package_bridge_confidence() -> tuple[str, float] | None:
+    with neo4j_driver() as driver:
+        with driver.session() as session:
+            record = session.run(
+                """
+                MATCH (:GraphifyNode {project_slug: $slug})
+                      -[r:CROSS_REPO_BRIDGE {rule: $rule}]->
+                      (:GraphifyNode {project_slug: $slug})
+                RETURN r.confidence AS confidence,
+                       r.confidence_score AS score
+                LIMIT 1
+                """,
+                slug=TEST_PROJECT_SLUG,
+                rule=RULE_PACKAGE_IMPORT,
+            ).single()
+    if not record:
+        return None
+    return str(record["confidence"]), float(record["score"])
+
+
 @contextmanager
 def _isolated_test():
     _cleanup()
@@ -260,9 +304,12 @@ def main() -> None:
         stats = build_bridges(TEST_PROJECT_SLUG, clear_existing=True)
         assert stats.repos == 2, stats
         assert stats.pairs_same_source_file == 1, stats
+        assert stats.pairs_package_import == 1, stats
         assert stats.pairs_same_code_symbol == 1, stats
         assert stats.pairs_same_generic_symbol == 1, stats
-        assert stats.edges_written == 2, stats
+        assert stats.edges_written == 3, stats
+        assert _count_bridges(RULE_PACKAGE_IMPORT) == 1
+        assert _package_bridge_confidence() == ("EXTRACTED", 1.0)
         assert _count_bridges(RULE_SAME_SOURCE_FILE) == 1
         assert _count_bridges(RULE_SAME_CODE_SYMBOL) == 1
         assert _count_bridges(RULE_SAME_GENERIC_SYMBOL) == 0, "generic rule must not write without opt-in"
@@ -274,7 +321,7 @@ def main() -> None:
             clear_existing=True,
         )
         assert stats.pairs_same_generic_symbol == 1, stats
-        assert stats.edges_written == 3, stats
+        assert stats.edges_written == 4, stats
         assert _count_bridges(RULE_SAME_GENERIC_SYMBOL) == 1
 
         # 3. Idempotency — re-running does not duplicate edges.
@@ -283,11 +330,11 @@ def main() -> None:
             rules=ALL_RULES,
             clear_existing=False,
         )
-        assert _count_bridges() == 3, _count_bridges()
+        assert _count_bridges() == 4, _count_bridges()
 
         # 4. clear_bridges wipes the project's bridges.
         deleted = clear_bridges(TEST_PROJECT_SLUG)
-        assert deleted == 3, deleted
+        assert deleted == 4, deleted
         assert _count_bridges() == 0
 
         # 5. Scope isolation — bridging another project does not touch this one.

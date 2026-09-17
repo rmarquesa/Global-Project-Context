@@ -232,6 +232,26 @@ gpc metrics drift --project project-slug
 gpc metrics signals --project project-slug
 ```
 
+For projects that do not receive commits, schedule a weekly collection across
+the whole registry. The command continues through individual project failures,
+prints a per-project result, and exits non-zero if any project failed:
+
+```bash
+./scripts/collect_metrics_all.sh
+```
+
+Example crontab entry (every Monday at 03:15):
+
+```cron
+15 3 * * 1 /absolute/path/to/GPC/scripts/collect_metrics_all.sh >> /absolute/path/to/GPC/.gpc/metrics-cron.log 2>&1
+```
+
+The underlying command is also available directly:
+
+```bash
+gpc metrics collect-all --json
+```
+
 ## Reset Local State
 
 Drop everything and rebuild from scratch:

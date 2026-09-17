@@ -128,6 +128,25 @@ def _seed(slug: str) -> None:
                     rule=e["rule"], conf=e["confidence"], score=e["confidence_score"],
                     slug=slug,
                 )
+            session.run(
+                """
+                MERGE (p:GPCProject {id: $pid})
+                SET p.slug = $slug, p.name = $slug, p.project_slug = $slug
+                MERGE (a:GPCEntity {id: $source})
+                SET a.project_slug = $slug, a.name = 'source.gpc',
+                    a.repo_slug = 'alpha'
+                MERGE (b:GPCEntity {id: $target})
+                SET b.project_slug = $slug, b.name = 'target.gpc',
+                    b.repo_slug = 'alpha'
+                MERGE (p)-[:OWNS_ENTITY]->(a)
+                MERGE (p)-[:OWNS_ENTITY]->(b)
+                MERGE (a)-[r:GPC_RELATION {id: $rid}]->(b)
+                SET r.confidence = 0.75
+                """,
+                pid=f"{slug}:gpc-project", slug=slug,
+                source=f"{slug}:entity:source", target=f"{slug}:entity:target",
+                rid=f"{slug}:gpc-relation",
+            )
 
 
 def _cleanup(slug: str) -> None:
@@ -139,6 +158,8 @@ def _cleanup(slug: str) -> None:
                 WHERE (n:GraphifyProject AND n.slug = $slug)
                    OR (n:GraphifyRepo AND n.project_slug = $slug)
                    OR (n:GraphifyNode AND n.project_slug = $slug)
+                   OR (n:GPCProject AND n.slug = $slug)
+                   OR (n:GPCEntity AND n.project_slug = $slug)
                 DETACH DELETE n
                 """,
                 slug=slug,
@@ -199,7 +220,39 @@ def main() -> None:
             for e in n["edges"]
         ), result
 
-        # 4. Summary — returns repos, gods, and bridges.
+        # 4. GPC-side relations are opt-in and return GPCEntity nodes.
+        gpc_source = f"{TEST_PROJECT_SLUG}:entity:source"
+        default_gpc_result = graph_neighbors(
+            TEST_PROJECT_SLUG, gpc_source, relations=["GPC_RELATION"]
+        )
+        assert default_gpc_result["neighbors"] == [], default_gpc_result
+        result = graph_neighbors(
+            TEST_PROJECT_SLUG, gpc_source,
+            min_confidence="INFERRED",
+            relations=["GPC_RELATION"],
+        )
+        assert result["start"]["id"] == gpc_source, result
+        assert {n["label"] for n in result["neighbors"]} == {"target.gpc"}, result
+        edge = result["neighbors"][0]["edges"][0]
+        assert edge["relation"] == "GPC_RELATION"
+        assert edge["confidence"] == "INFERRED"
+        assert edge["confidence_score"] == 0.75
+
+        # OWNS_ENTITY is also opt-in; ownership/plumbing never leaks by default.
+        result = graph_neighbors(
+            TEST_PROJECT_SLUG, TEST_PROJECT_SLUG, relations=["OWNS_ENTITY"]
+        )
+        assert {n["label"] for n in result["neighbors"]} == {
+            "source.gpc",
+            "target.gpc",
+        }, result
+        default_result = graph_neighbors(TEST_PROJECT_SLUG, TEST_PROJECT_SLUG)
+        assert default_result["neighbors"] == [], default_result
+        assert graph_neighbors(
+            NEIGHBOUR_SLUG, gpc_source, relations=["GPC_RELATION"]
+        )["neighbors"] == []
+
+        # 5. Summary — returns repos, gods, and bridges.
         summary = graph_summary(TEST_PROJECT_SLUG)
         assert summary["found"] is True, summary
         repo_slugs = {r["repo"] for r in summary["repos"]}

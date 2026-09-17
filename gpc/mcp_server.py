@@ -302,6 +302,8 @@ def mcp_graph_neighbors(
     ``EXTRACTED``, ``INFERRED``, ``AMBIGUOUS`` (default ``EXTRACTED`` — caller
     must opt in to heuristic edges). ``relations`` filters by relationship
     type (e.g. ``["GRAPHIFY_RELATION"]`` or ``["CROSS_REPO_BRIDGE"]``).
+    ``GPC_RELATION`` and ``OWNS_ENTITY`` are exact, explicit opt-in filters;
+    plumbing relations such as ``HAS_REPO`` are never traversed.
     """
     try:
         if min_confidence not in ALLOWED_CONFIDENCES:

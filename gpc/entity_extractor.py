@@ -89,8 +89,34 @@ def extract_for_project(project_id: str, project_slug: str) -> dict[str, int]:
             (project_id,),
         ).fetchall()
 
-        if not files:
-            return stats
+        # Remove only rows owned by this extractor. Indexed files can be
+        # pruned between runs, and leaving their entities behind would make
+        # the rebuildable Neo4j projection contain deleted files. Keep
+        # entities/relations produced by other extractors intact.
+        conn.execute(
+            """
+            delete from gpc_relations
+            where project_id = %s
+              and relation_type = 'imports'
+              and metadata->>'source' = 'gpc_indexer'
+            """,
+            (project_id,),
+        )
+        conn.execute(
+            """
+            delete from gpc_entities e
+            where e.project_id = %s
+              and e.entity_type = 'file'
+              and e.metadata->>'source' = 'gpc_indexer'
+              and not exists (
+                  select 1
+                  from gpc_files f
+                  where f.project_id = e.project_id
+                    and f.id::text = e.metadata->>'file_id'
+              )
+            """,
+            (project_id,),
+        )
 
         # 1. Upsert one entity per file, using (repo_slug + relative_path)
         # as a stable name so repos with identical paths do not collide.
@@ -136,7 +162,7 @@ def extract_for_project(project_id: str, project_slug: str) -> dict[str, int]:
                 text = Path(file_row["absolute_path"]).read_text(
                     encoding="utf-8", errors="replace"
                 )
-            except (FileNotFoundError, PermissionError):
+            except OSError:
                 continue
 
             targets = _extract_targets(text, patterns)

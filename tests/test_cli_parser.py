@@ -54,3 +54,25 @@ def test_mcp_usage_parser_accepts_since_window() -> None:
     assert args.since == "7d"
     assert args.json is True
     assert args.func.__name__ == "cmd_mcp_usage"
+
+
+def test_metrics_collect_all_parser_supports_json_output() -> None:
+    args = parse_args(["metrics", "collect-all", "--json"])
+
+    assert args.json is True
+    assert args.func.__name__ == "cmd_metrics_collect_all"
+
+
+def test_metrics_collect_parser_accepts_scheduled_source() -> None:
+    args = parse_args(["metrics", "collect", "--project", "gpc", "--source", "scheduled"])
+
+    assert args.source == "scheduled"
+    assert args.func.__name__ == "cmd_metrics_collect"
+
+
+def test_audit_cross_project_parser_supports_output_and_json() -> None:
+    args = parse_args(["audit", "cross-project", "--output", "docs/audit.md", "--json"])
+
+    assert args.output == "docs/audit.md"
+    assert args.json is True
+    assert args.func.__name__ == "cmd_audit_cross_project"

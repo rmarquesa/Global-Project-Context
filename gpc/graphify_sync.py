@@ -44,7 +44,7 @@ def sync_graphify_to_neo4j(
 
     graph = json.loads(graph_path.read_text(encoding="utf-8"))
     raw_nodes = graph.get("nodes") or []
-    raw_links = graph.get("links") or []
+    raw_links = graph.get("links") or graph.get("edges") or []
 
     nodes = [
         _normalize_node(n, project_slug=project_slug, repo_slug=repo_slug)
@@ -115,6 +115,15 @@ def _normalize_node(
         "file_type": node.get("file_type"),
         "source_file": node.get("source_file"),
         "source_location": node.get("source_location"),
+        # Retain package/import identity when Graphify provides it.  These
+        # optional fields are consumed by the conservative cross-repo
+        # package_import bridge rule.
+        "package_name": node.get("package_name") or node.get("package"),
+        "package": node.get("package"),
+        "package_path": node.get("package_path"),
+        "import_path": node.get("import_path"),
+        "module_path": node.get("module_path"),
+        "qualified_name": node.get("qualified_name"),
         "community": node.get("community"),
     }
 
@@ -255,6 +264,12 @@ def _upsert_graphify_nodes(tx, nodes: list[dict[str, Any]]) -> None:
             n.file_type = node.file_type,
             n.source_file = node.source_file,
             n.source_location = node.source_location,
+            n.package_name = node.package_name,
+            n.package = node.package,
+            n.package_path = node.package_path,
+            n.import_path = node.import_path,
+            n.module_path = node.module_path,
+            n.qualified_name = node.qualified_name,
             n.community = node.community,
             n.source = 'graphify-out',
             n.updated_at = datetime()

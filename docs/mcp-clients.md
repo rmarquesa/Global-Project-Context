@@ -57,6 +57,14 @@ bridges). Use them together: `graph_summary` to orient on the project,
 a chain between two symbols, then `search` / `context` to get the actual code
 behind any interesting node.
 
+`gpc_graph_neighbors.relations` is an exact list of Neo4j relationship types
+(not a pattern or regex). It defaults to `GRAPHIFY_RELATION` and
+`CROSS_REPO_BRIDGE`. The GPC projection types `GPC_RELATION` and
+`OWNS_ENTITY` are opt-in: include them explicitly when inspecting GPC entities.
+Structural plumbing such as `HAS_REPO`, `HAS_GRAPH_NODE` and `OWNS_REPO` is
+never traversed. GPC entities can be both the starting node and returned
+neighbours.
+
 **Honesty on graph edges**. Every edge returned by a `graph_*` tool carries a
 `confidence` (`EXTRACTED`, `INFERRED`, or `AMBIGUOUS`) and a numeric
 `confidence_score`. `EXTRACTED` means the relationship is explicit in source
@@ -65,6 +73,12 @@ different repos share the same source file path. `AMBIGUOUS` is kept only
 when the caller explicitly passes `min_confidence="AMBIGUOUS"`. The default
 `min_confidence="EXTRACTED"` hides heuristic bridges so the caller cannot
 treat them as fact by accident.
+
+For compatibility with older projections, an edge without a confidence is
+reported explicitly as `EXTRACTED` with score `1.0` when it is a directly
+derived fact. Numeric GPC confidence values remain the score and are labelled
+`INFERRED` (or `AMBIGUOUS`) below the extracted threshold. Every returned edge
+therefore has both a confidence label and a numeric `confidence_score`.
 
 ## Auditing MCP Usage
 

@@ -64,8 +64,10 @@ Expansões naturais que ficam na Fase 2:
 - [x] `gpc_graph_community` — entregue em 2026-04-24.
 - [x] `gpc_graph_diff` — entregue em 2026-04-24 junto com a coleta
       longitudinal `gpc_self_metrics` (Fase 3.1).
-- [ ] Parâmetro `relations` aceitar regex ou incluir relações GPC-side
-      (`OWNS_ENTITY`, `GPC_RELATION`) na camada `graph_neighbors`.
+- [x] `graph_neighbors.relations` mantém lista exata e inclui, sob solicitação
+      explícita, relações GPC-side (`OWNS_ENTITY`, `GPC_RELATION`), sem expor
+      plumbing (`HAS_REPO`, `HAS_GRAPH_NODE`, `OWNS_REPO`). Nós `GPCEntity` e
+      confidence explícita são documentados e cobertos por smoke test.
 
 ## Fase 1.7 — Observabilidade do MCP (entregue)
 
@@ -172,9 +174,12 @@ Próximos passos naturais em cima disto (continuam Fase 3):
 - [x] Detector de drift — entregue em 2026-04-26 com migration
       `0009_drift_signals.sql`, módulo [gpc/drift.py](../gpc/drift.py),
       CLI `gpc metrics drift/signals` e MCP `gpc_drift_signals`.
-- [ ] Job cron semanal que roda `gpc metrics collect` para cada projeto
-      (já que hooks só disparam quando há write; projetos parados
-      ficariam sem snapshots novos).
+- [x] Job semanal disponível via `gpc metrics collect-all` e
+      [scripts/collect_metrics_all.sh](../scripts/collect_metrics_all.sh).
+      A rotina percorre todos os projetos registrados, continua após falhas
+      individuais e retorna código não-zero se algum projeto falhar; a
+      instalação em cron está documentada em
+      [docs/operations.md](operations.md).
 
 ## Fase 1.8 — Graph quality improvements (entregue)
 
@@ -248,15 +253,16 @@ Shortest path entre dois símbolos (labels ou IDs).
 
 ### Prontidão da fase
 
-- [ ] Os três tools aparecem em `gpc install-clients` e em
-  [AGENTS.md](../AGENTS.md).
-- [ ] Smoke test dedicado em `tests/smoke/graph_query_smoke_test.py` cobrindo:
-  projeto sem projeção (fallback), projeto com projeção (caminho feliz),
-  filtro por slug (scope isolation).
-- [ ] [docs/mcp-clients.md](mcp-clients.md) lista os três novos tools.
-- [ ] Decisão registrada em [docs/architecture.md](architecture.md) sobre por
-  que os tools são opt-in e como `min_confidence` protege contra
-  alucinação arquitetural.
+- [x] Os três tools estão registrados no servidor MCP e documentados em
+  [docs/mcp-clients.md](mcp-clients.md) e
+  [docs/architecture.md](architecture.md). O repositório não contém
+  `AGENTS.md`; portanto, não há uma cópia adicional a manter sincronizada.
+- [x] Smoke test dedicado em
+  [tests/smoke/graph_query_smoke_test.py](../tests/smoke/graph_query_smoke_test.py)
+  cobre filtro por confidence, relações, isolamento por projeto e traversal.
+- [x] A decisão sobre opt-in e `min_confidence` está registrada em
+  [docs/architecture.md](architecture.md): o default expõe apenas fatos
+  `EXTRACTED`, enquanto inferências exigem opt-in explícito.
 
 ---
 
@@ -291,10 +297,11 @@ zerar infraestrutura e recomeçar.
       "GPC MCP").
 
 Gap conhecido identificado no processo:
-- [ ] `gpc_entities` e `gpc_relations` estão vazios no ambiente atual porque
-      o indexer ainda não as popula. O único consumidor dessas tabelas é
-      `project_graph_to_neo4j`, que hoje projeta sempre 0 entities. Criar
-      extrator de entities a partir de chunks é um item da Fase 2.
+- [x] `gpc_entities` e `gpc_relations` agora são preenchidos pelo extrator
+      acionado ao final do indexador. O módulo
+      [gpc/entity_extractor.py](../gpc/entity_extractor.py) cria entidades de
+      arquivo e relações de import, com smoke test em
+      [tests/smoke/graph_quality_smoke_test.py](../tests/smoke/graph_quality_smoke_test.py).
 
 ## Fase 1.5 — Bridging cross-repo (entregue)
 
@@ -317,8 +324,9 @@ monorepo.
       `same_source_file` + 22 `same_code_symbol`.
 
 Próximas evoluções naturais (ficam na Fase 2):
-- [ ] Regra `package_import` — parse de `package.json` / `import` statements
-      para upgrade de INFERRED → EXTRACTED em casos com qualificação de pacote.
+- [x] Regra `package_import` — nós Graphify com identidade explícita de
+      pacote/módulo são pareados entre repos e promovidos de INFERRED →
+      EXTRACTED somente quando a qualificação é clara.
 - [x] Regra `content_hash` — entregue em 2026-04-24 (INFERRED 0.95). No
       alugafacil ainda não captura sinal porque cada worker tem sua própria
       implementação de `crypto.js`; fica útil quando há vendoring bit-a-bit.
@@ -330,6 +338,12 @@ escalar. Backend Cloudflare com muitos workers é o caso mais exigente porque
 mistura muitos repos pequenos sob um `project_slug` comum.
 
 ### 2.1 Checklist por projeto onboardado
+
+O checkout do próprio GPC foi validado em 2026-09-17 como
+`gpc-local-verify`: Graphify produziu 1.170 nós, 2.947 relações e 49
+communities; a projeção Neo4j foi sincronizada e `gpc verify --live` terminou
+com 10/10 checks passando. Os itens abaixo continuam pendentes apenas para os
+dois projetos adicionais necessários à meta da fase.
 
 Rodar, em ordem, para cada novo projeto antes de declarar "indexado":
 
@@ -347,32 +361,63 @@ Rodar, em ordem, para cada novo projeto antes de declarar "indexado":
 Cloudflare backend com N workers é o teste de estresse para consolidação
 cross-repo ([docs/graphify.md:50-52](graphify.md#L50-L52)).
 
-- [ ] Escolher `project_slug` comum (ex. `cf-backend`) e `repo_slug` por worker.
-- [ ] Validar que nós Graphify usam IDs estáveis
-  `<project_slug>:<repo_slug>:<graphify_node_id>`.
-- [ ] Rodar `gpc_graph_path` entre dois workers que compartilham um contrato
+O mecanismo de consolidação foi validado sinteticamente em 2026-09-17 via
+`tests/test_multi_repo_graph_path.py` e `tests/test_graphify_freshness.py`
+(dois repos sintéticos `worker-a`/`worker-b` sob um mesmo `project_slug`,
+contrato compartilhado, bridge automática e medição de lag). Falta apenas
+aplicar o mesmo processo a um backend Cloudflare real com N workers.
+
+- [ ] Escolher `project_slug` comum (ex. `cf-backend`) e `repo_slug` por worker
+  num backend Cloudflare real.
+- [x] Validar que nós Graphify usam IDs estáveis
+  `<project_slug>:<repo_slug>:<graphify_node_id>` — confirmado via
+  `gpc/graphify_freshness.py` + `tests/test_multi_repo_graph_path.py`.
+- [x] Rodar `gpc_graph_path` entre dois workers que compartilham um contrato
   — resultado esperado: caminho curto passando pelo símbolo compartilhado.
-- [ ] Medir freshness lag: tempo entre commit num worker e Neo4j refletindo.
+  Confirmado sinteticamente: caminho curto via `CROSS_REPO_BRIDGE` +
+  `GRAPHIFY_RELATION`.
+- [x] Medir freshness lag: tempo entre sync Graphify e disponibilidade no
+  Neo4j — utilitário `gpc/graphify_freshness.py` (`measure_sync_freshness`),
+  lag medido localmente em ~0.0017s. Falta medir o lag real
+  commit→Neo4j num pipeline de produção (depende do post-commit hook real).
 
 ### 2.3 Auditoria cross-projeto
 
 Depois de indexar backend/frontend/database, rodar uma passagem de análise
 com o próprio GPC (dogfooding):
 
-- [ ] `gpc_graph_summary` em cada projeto — registrar god nodes e communities.
-- [ ] Comparar convenções: naming, estrutura de config, modelo de embeddings
+A ferramenta de auditoria foi implementada e validada em 2026-09-17
+(`gpc/cross_project_audit.py`, comando `gpc audit cross-project`). Rodada
+ao vivo contra o único projeto registrado hoje (`gpc-local-verify`), gerando
+`docs/audit-2026-09-17.md` sem gaps críticos. Falta rodar contra os 2+
+projetos adicionais reais para uma auditoria cross-projeto completa.
+
+- [x] `gpc_graph_summary` em cada projeto — registrar god nodes e communities.
+  Automatizado por `gpc audit cross-project` (itera todos os projetos
+  registrados via `graph_summary`).
+- [x] Comparar convenções: naming, estrutura de config, modelo de embeddings
   (todos devem usar `nomic-embed-text:latest` —
-  [AGENTS.md:19](../AGENTS.md#L19)).
-- [ ] Listar gaps/inconsistências encontradas num documento
-  `docs/audit-<date>.md`.
-- [ ] Criar issues para cada gap classificado como crítico.
+  [AGENTS.md:19](../AGENTS.md#L19)). Comparação automática incluída no
+  relatório gerado.
+- [x] Listar gaps/inconsistências encontradas num documento
+  `docs/audit-<date>.md` — gerado automaticamente pelo comando
+  (`docs/audit-2026-09-17.md`).
+- [ ] Criar issues para cada gap classificado como crítico. (Nenhum gap
+  crítico foi detectado ainda porque só há 1 projeto registrado; pendente
+  até termos gaps reais entre 3 projetos.)
 
 ### Prontidão da fase
 
-- [ ] Três projetos indexados, com projeção Neo4j ativa.
-- [ ] Relatório de auditoria com recomendações priorizadas.
-- [ ] Zero vazamento de contexto entre projetos validado por smoke test
-  dedicado.
+- [ ] Três projetos indexados, com projeção Neo4j ativa. (Apenas 1 projeto
+  real — `gpc-local-verify` — está indexado hoje; faltam 2 projetos
+  externos reais.)
+- [ ] Relatório de auditoria com recomendações priorizadas. (Ferramenta
+  pronta e validada; falta rodá-la contra 3 projetos reais para produzir
+  recomendações cross-projeto de fato.)
+- [x] Zero vazamento de contexto entre projetos validado por smoke test
+  dedicado — `tests/smoke/cross_project_isolation_smoke_test.py`
+  (search, context, graph_neighbors/summary/path, incluindo rejeição de
+  path adversarial entre projetos), passando ao vivo em 2026-09-17.
 
 ---
 

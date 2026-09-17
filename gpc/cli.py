@@ -423,11 +423,18 @@ def build_parser() -> argparse.ArgumentParser:
     metrics_collect.add_argument(
         "--source",
         default="manual",
-        choices=("manual", "snapshot"),
+        choices=("manual", "snapshot", "scheduled"),
         help="Trigger label stored with the snapshot.",
     )
     metrics_collect.add_argument("--json", action="store_true")
     metrics_collect.set_defaults(func=cmd_metrics_collect)
+
+    metrics_collect_all = metrics_subs.add_parser(
+        "collect-all",
+        help="Record a scheduled snapshot for every registered project.",
+    )
+    metrics_collect_all.add_argument("--json", action="store_true")
+    metrics_collect_all.set_defaults(func=cmd_metrics_collect_all)
 
     metrics_list = metrics_subs.add_parser(
         "list",
@@ -461,6 +468,20 @@ def build_parser() -> argparse.ArgumentParser:
     )
     metrics_signals.add_argument("--json", action="store_true")
     metrics_signals.set_defaults(func=cmd_metrics_signals)
+
+    audit_parser = subparsers.add_parser(
+        "audit",
+        help="Cross-project audit reports.",
+    )
+    audit_subs = audit_parser.add_subparsers(dest="audit_cmd", required=True)
+
+    audit_cross_project = audit_subs.add_parser(
+        "cross-project",
+        help="Aggregate graph summaries and convention gaps across all registered projects.",
+    )
+    audit_cross_project.add_argument("--output", help="Markdown output path.")
+    audit_cross_project.add_argument("--json", action="store_true")
+    audit_cross_project.set_defaults(func=cmd_audit_cross_project)
 
     mcp_usage_parser = subparsers.add_parser(
         "mcp-usage", help="Summarize MCP tool-call usage without raw payloads."
@@ -1355,6 +1376,68 @@ def cmd_metrics_collect(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_metrics_collect_all(args: argparse.Namespace) -> int:
+    from gpc.self_metrics import collect_metrics
+
+    results: list[dict[str, object]] = []
+    failures = 0
+    for project in list_projects():
+        slug = str(project["slug"])
+        try:
+            snapshot = collect_metrics(project_slug=slug, source="scheduled")
+        except Exception as exc:
+            failures += 1
+            results.append(
+                {
+                    "project_slug": slug,
+                    "status": "failed",
+                    "error": str(exc),
+                    "error_type": exc.__class__.__name__,
+                }
+            )
+            continue
+        results.append(
+            {
+                "project_slug": slug,
+                "status": "succeeded",
+                "snapshot_id": str(snapshot.id),
+                "counts": snapshot.counts,
+            }
+        )
+
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "projects": len(results),
+                    "succeeded": len(results) - failures,
+                    "failed": failures,
+                    "results": results,
+                },
+                default=str,
+                indent=2,
+            )
+        )
+    else:
+        print(
+            f"projects={len(results)} succeeded={len(results) - failures} "
+            f"failed={failures}"
+        )
+        for result in results:
+            if result["status"] == "succeeded":
+                print(
+                    f"project={result['project_slug']} status=succeeded "
+                    f"snapshot={result['snapshot_id']}"
+                )
+            else:
+                print(
+                    f"project={result['project_slug']} status=failed "
+                    f"error={result['error']}",
+                    file=sys.stderr,
+                )
+    return 1 if failures else 0
+
+
 def cmd_metrics_list(args: argparse.Namespace) -> int:
     from gpc.self_metrics import list_snapshots
 
@@ -1419,6 +1502,20 @@ def cmd_metrics_signals(args: argparse.Namespace) -> int:
             f"{row['created_at']}  {row['project_slug']:<25} "
             f"{row['severity']:<8} {row['signal_type']:<30} {row['message']}"
         )
+    return 0
+
+
+def cmd_audit_cross_project(args: argparse.Namespace) -> int:
+    from gpc.cross_project_audit import generate_cross_project_audit
+
+    audit = generate_cross_project_audit(output_path=args.output)
+    if args.json:
+        print(json.dumps(audit, default=str, indent=2))
+        return 0
+    print(
+        f"projects={audit['projects_audited']} critical_gaps={len(audit['critical_gaps'])} "
+        f"report={audit['output_path']}"
+    )
     return 0
 
 

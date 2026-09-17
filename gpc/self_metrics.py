@@ -26,7 +26,7 @@ from psycopg.types.json import Jsonb
 
 from gpc.db import pg_connection
 
-VALID_SOURCES = ("gpc-index", "graph-bridge", "manual", "snapshot")
+VALID_SOURCES = ("gpc-index", "graph-bridge", "manual", "snapshot", "scheduled")
 
 
 @dataclass

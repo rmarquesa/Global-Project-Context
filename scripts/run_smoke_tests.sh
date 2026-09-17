@@ -23,6 +23,7 @@ smoke_tests=(
   tests.smoke.graph_projection_smoke_test
   tests.smoke.graph_query_smoke_test
   tests.smoke.graph_self_visibility_smoke_test
+  tests.smoke.cross_project_isolation_smoke_test
   tests.smoke.verify_smoke_test
   tests.smoke.search_eval_smoke_test
   tests.smoke.context_pack_smoke_test

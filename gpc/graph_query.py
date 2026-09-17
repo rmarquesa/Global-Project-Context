@@ -12,6 +12,11 @@ Cypher so that every result is explicit about:
 GRAPHIFY_RELATION edges produced by Graphify today do not carry a confidence
 property — they are treated as ``EXTRACTED`` structural facts. CROSS_REPO_BRIDGE
 edges always carry ``INFERRED`` or ``AMBIGUOUS``.
+
+GPC-side edges are opt-in: ``OWNS_ENTITY`` and ``GPC_RELATION`` are never part
+of the default traversal. A missing GPC confidence is an explicit
+``EXTRACTED`` fact; numeric confidence values are retained as scores and
+classified as ``INFERRED``/``AMBIGUOUS`` when below 1.0.
 """
 
 from __future__ import annotations
@@ -31,6 +36,9 @@ CONFIDENCE_SCORES = {
 
 DEFAULT_MIN_CONFIDENCE = "EXTRACTED"
 ALLOWED_CONFIDENCES = ("EXTRACTED", "INFERRED", "AMBIGUOUS")
+DEFAULT_RELATIONS = ("GRAPHIFY_RELATION", "CROSS_REPO_BRIDGE")
+GPC_RELATIONS = ("OWNS_ENTITY", "GPC_RELATION")
+KNOWN_RELATIONS = frozenset((*DEFAULT_RELATIONS, *GPC_RELATIONS))
 
 
 def _min_score(min_confidence: str) -> float:
@@ -50,6 +58,31 @@ def _edge_passes(edge: dict[str, Any], threshold: float) -> bool:
     if score is not None:
         return float(score) >= threshold
     return CONFIDENCE_SCORES.get(conf or "AMBIGUOUS", 0.0) >= threshold
+
+
+def _normalise_edge(edge: dict[str, Any]) -> dict[str, Any]:
+    """Give every edge the public confidence shape, including legacy GPC edges."""
+    value = edge.get("confidence")
+    score = edge.get("confidence_score")
+    if isinstance(value, (int, float)):
+        score = float(value) if score is None else float(score)
+        value = (
+            "EXTRACTED" if score >= 1.0
+            else "INFERRED" if score >= CONFIDENCE_SCORES["INFERRED"]
+            else "AMBIGUOUS"
+        )
+    if value is None and score is None:
+        value, score = "EXTRACTED", 1.0
+    elif isinstance(value, str) and score is None:
+        score = CONFIDENCE_SCORES.get(value, 0.0)
+    elif value is None:
+        score = float(score)
+        value = (
+            "EXTRACTED" if score >= 1.0
+            else "INFERRED" if score >= CONFIDENCE_SCORES["INFERRED"]
+            else "AMBIGUOUS"
+        )
+    return {**edge, "confidence": value, "confidence_score": score}
 
 
 @dataclass
@@ -81,15 +114,16 @@ def graph_neighbors(
     relations: list[str] | None = None,
     limit: int = 50,
 ) -> dict[str, Any]:
-    """Return neighbors of a node in a project's Graphify subgraph.
+    """Return neighbors of a node in a project's graph.
 
-    ``node_query`` is matched against ``GraphifyNode.id`` for an exact match
-    or against ``GraphifyNode.label`` with case-insensitive containment. The
+    ``node_query`` is matched against a Graphify/GPC node id for an exact match
+    or against its display name with case-insensitive containment. The
     first match wins — callers can inspect the returned ``start`` node to
     confirm which one was picked.
 
-    ``depth`` is capped at 3. ``relations`` filters by relationship type
-    (e.g. ``["GRAPHIFY_RELATION", "CROSS_REPO_BRIDGE"]``); defaults to both.
+    ``depth`` is capped at 3. ``relations`` is an exact list of Neo4j
+    relationship types. Graphify types are the default; GPC-side types are
+    included only when explicitly listed.
     """
 
     if not project_slug:
@@ -98,22 +132,30 @@ def graph_neighbors(
         raise ValueError("depth must be between 1 and 3")
     threshold = _min_score(min_confidence)
     rel_filter = [r.upper() for r in relations] if relations else None
+    selected_relations = (
+        list(DEFAULT_RELATIONS)
+        if rel_filter is None
+        else [r for r in rel_filter if r in KNOWN_RELATIONS]
+    )
 
     with neo4j_driver() as driver:
         with driver.session() as session:
             start_record = session.run(
                 """
-                MATCH (n:GraphifyNode {project_slug: $slug})
-                WHERE n.id = $q
-                   OR toLower(n.label) CONTAINS toLower($q)
-                   OR toLower(coalesce(n.source_file, '')) = toLower($q)
+                MATCH (n)
+                WHERE (n:GraphifyNode OR n:GPCEntity OR n:GPCProject OR n:GPCRepo)
+                  AND (n.project_slug = $slug OR (n:GPCProject AND n.slug = $slug))
+                  AND (n.id = $q
+                   OR toLower(coalesce(n.label, n.name, n.slug, '')) CONTAINS toLower($q)
+                   OR toLower(coalesce(n.source_file, n.relative_path, '')) = toLower($q))
                 RETURN n
                 ORDER BY CASE
                              WHEN n.id = $q THEN 0
-                             WHEN toLower(coalesce(n.source_file, '')) = toLower($q) THEN 1
+                             WHEN toLower(coalesce(n.source_file, n.relative_path, '')) =
+                                  toLower($q) THEN 1
                              ELSE 2
                          END,
-                         size(n.label), n.id
+                         size(coalesce(n.label, n.name, n.slug, n.id)), n.id
                 LIMIT 1
                 """,
                 slug=project_slug,
@@ -127,43 +169,59 @@ def graph_neighbors(
                     "neighbors": [],
                 }
             start = dict(start_record["n"])
+            start_display = (
+                start.get("label")
+                or start.get("name")
+                or start.get("slug")
+                or start["id"]
+            )
 
             # Expand up to `depth` hops. We return each intermediate and final
             # neighbor with the sequence of edges that led to it so the caller
-            # can reconstruct paths. Restrict to semantic edges only — HAS_REPO
-            # / HAS_GRAPH_NODE / OWNS_REPO would leak structural plumbing.
-            rows = session.run(
-                f"""
-                MATCH (start:GraphifyNode {{id: $start_id}})
-                MATCH path = (start)-[rels:GRAPHIFY_RELATION|CROSS_REPO_BRIDGE*1..{depth}]-(nb:GraphifyNode)
-                WHERE nb.project_slug = $slug
-                  AND nb.id <> start.id
-                  AND all(n IN nodes(path) WHERE n:GraphifyNode AND n.project_slug = $slug)
-                WITH start, nb, rels, path,
-                     [r IN rels | {{
-                         relation: type(r),
-                         confidence: r.confidence,
-                         confidence_score: r.confidence_score,
-                         rule: r.rule,
-                         evidence: r.evidence,
-                         startNode: startNode(r).id,
-                         endNode: endNode(r).id
-                     }}] AS edges
-                RETURN nb.id AS id, nb.label AS label, nb.repo_slug AS repo_slug,
-                       nb.source_file AS source_file, length(path) AS hops, edges
-                ORDER BY hops ASC, label ASC
-                LIMIT $limit
-                """,
-                start_id=start["id"],
-                slug=project_slug,
-                limit=limit * 4,  # fetch extras to survive confidence/relation filtering
-            ).data()
+            # can reconstruct paths. The relationship type list is built only
+            # from constants above — arbitrary Cypher cannot enter the query.
+            if not selected_relations:
+                rows = []
+            else:
+                rows = session.run(
+                    f"""
+                    MATCH (start)
+                    WHERE start.id = $start_id
+                    MATCH path = (start)-[rels:{'|'.join(selected_relations)}*1..{depth}]-(nb)
+                    WHERE (nb:GraphifyNode OR nb:GPCEntity OR nb:GPCProject OR nb:GPCRepo)
+                      AND (nb.project_slug = $slug OR (nb:GPCProject AND nb.slug = $slug))
+                      AND all(n IN nodes(path) WHERE
+                          (n:GraphifyNode OR n:GPCEntity OR n:GPCProject OR n:GPCRepo)
+                          AND (n.project_slug = $slug OR (n:GPCProject AND n.slug = $slug)))
+                      AND nb.id <> start.id
+                    WITH start, nb, rels, path,
+                         [r IN rels | {{
+                             relation: type(r),
+                             confidence: r.confidence,
+                             confidence_score: r.confidence_score,
+                             rule: r.rule,
+                             evidence: r.evidence,
+                             startNode: startNode(r).id,
+                             endNode: endNode(r).id
+                         }}] AS edges
+                    RETURN nb.id AS id,
+                           coalesce(nb.label, nb.name, nb.slug, nb.id) AS label,
+                           coalesce(nb.repo_slug, nb.slug) AS repo_slug,
+                           coalesce(nb.source_file, nb.relative_path) AS source_file,
+                           length(path) AS hops, edges
+                    ORDER BY hops ASC, label ASC
+                    LIMIT $limit
+                    """,
+                    start_id=start["id"],
+                    slug=project_slug,
+                    limit=limit * 4,
+                ).data()
 
     kept: list[NeighborNode] = []
     seen: set[str] = set()
     for row in rows:
         # Apply relation-type + confidence filter across every edge in the path.
-        edges_raw = row["edges"] or []
+        edges_raw = [_normalise_edge(e) for e in (row["edges"] or [])]
         if rel_filter is not None and not all(e["relation"] in rel_filter for e in edges_raw):
             continue
         if not all(_edge_passes(e, threshold) for e in edges_raw):
@@ -204,9 +262,9 @@ def graph_neighbors(
         "query": node_query,
         "start": {
             "id": start["id"],
-            "label": start["label"],
-            "repo_slug": start.get("repo_slug"),
-            "source_file": start.get("source_file"),
+            "label": start_display,
+            "repo_slug": start.get("repo_slug") or start.get("slug"),
+            "source_file": start.get("source_file") or start.get("relative_path"),
         },
         "depth": depth,
         "min_confidence": min_confidence,
