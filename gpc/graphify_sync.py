@@ -125,6 +125,11 @@ def _normalize_node(
         "module_path": node.get("module_path"),
         "qualified_name": node.get("qualified_name"),
         "community": node.get("community"),
+        # Graphify marks stdlib/third-party symbols as external concept
+        # nodes; retained so callers (e.g. the Fase 3.4 test-portfolio
+        # report) can tell "external boundary" nodes apart from repo code.
+        "external": bool(node.get("external", False)),
+        "node_type": node.get("type"),
     }
 
 
@@ -271,6 +276,8 @@ def _upsert_graphify_nodes(tx, nodes: list[dict[str, Any]]) -> None:
             n.module_path = node.module_path,
             n.qualified_name = node.qualified_name,
             n.community = node.community,
+            n.external = node.external,
+            n.node_type = node.node_type,
             n.source = 'graphify-out',
             n.updated_at = datetime()
         MERGE (r)-[:HAS_GRAPH_NODE]->(n)

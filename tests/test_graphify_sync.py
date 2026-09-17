@@ -20,6 +20,28 @@ def test_normalize_node_preserves_package_identity() -> None:
     assert node["id"] == "commerce:api:service"
 
 
+def test_normalize_node_preserves_external_concept_marker() -> None:
+    node = _normalize_node(
+        {"id": "argparse", "label": "argparse", "external": True, "type": "external"},
+        project_slug="commerce",
+        repo_slug="api",
+    )
+
+    assert node["external"] is True
+    assert node["node_type"] == "external"
+
+
+def test_normalize_node_defaults_external_to_false() -> None:
+    node = _normalize_node(
+        {"id": "service", "label": "Service"},
+        project_slug="commerce",
+        repo_slug="api",
+    )
+
+    assert node["external"] is False
+    assert node["node_type"] is None
+
+
 def test_normalize_relation_accepts_graphify_endpoint_aliases() -> None:
     relation = _normalize_relation(
         {"_src": "source", "_tgt": "target", "relation": "IMPORTS"},

@@ -268,6 +268,18 @@ To schedule it after the weekly metrics collection, add a separate cron entry:
 15 6 * * 1 cd /path/to/Global-Project-Context && .venv/bin/python scripts/auto_research.py --all >> /var/log/gpc-auto-research.log 2>&1
 ```
 
+## Graph-Derived Test Portfolio
+
+Check whether high-degree ("god") nodes with external calls are exercised by
+any file under `tests/`, and whether `rationale_for` edges still resolve to
+a real implementation node. This is advisory only — pass `--persist` to
+record each gap as an `info`-severity `gpc_drift_signals` row:
+
+```bash
+gpc graph test-portfolio --project project-slug --json
+gpc graph test-portfolio --project project-slug --persist
+```
+
 ## Reset Local State
 
 Drop everything and rebuild from scratch:

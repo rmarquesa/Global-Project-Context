@@ -485,17 +485,30 @@ Agendamento recomendado via cron externo (ver [operations.md](operations.md)).
 
 Gerar testes smoke a partir da topologia:
 
-- Para cada god node com `calls` para um módulo externo, existe um smoke test
-  que exercita o caminho?
-- Para cada `rationale_for` marcado EXTRACTED, existe implementação
-  correspondente?
+- [x] Para cada god node com `calls`/`imports`/`imports_from` para um módulo
+  externo, existe um arquivo de teste que referencia o módulo chamador?
+  Implementado em 2026-09-17: [gpc/graph_test_portfolio.py](../gpc/graph_test_portfolio.py),
+  comando `gpc graph test-portfolio`. Como efeito colateral, corrigiu um bug
+  real em [gpc/graphify_sync.py](../gpc/graphify_sync.py) que descartava os
+  campos `external`/`type` dos nós de conceito do Graphify ao persistir no
+  Neo4j (necessários para distinguir símbolos externos).
+- [x] Para cada `rationale_for` marcado EXTRACTED, existe implementação
+  correspondente? Mesmo comando reporta `rationale_for_dangling`.
 
-Discrepâncias viram entradas no relatório de drift.
+- [x] Discrepâncias viram entradas no relatório de drift — `--persist` grava
+  cada gap como sinal `info` em `gpc_drift_signals`
+  (`signal_type=graph_test_portfolio_gap`).
+
+Rodada ao vivo em 2026-09-17 contra `gpc-local-verify`: 158 chamadas
+externas checadas (132 cobertas), 94 `rationale_for` checados (0 dangling),
+26 gaps — todos concentrados em `scripts/install_mcp_clients.py`, que ainda
+não tem teste dedicado.
 
 ### 3.5 Sandbox de experimentação
 
-Pasta `experiments/` (gitignored por default) onde o loop de auto-research
-pode escrever protótipos isolados sem tocar em `gpc/`. Qualquer promoção
+Pasta `experiments/` (gitignored por default, exceto `README.md`) onde o
+loop de auto-research pode escrever protótipos isolados sem tocar em
+`gpc/`. Criada em 2026-09-17. Qualquer promoção
 para `gpc/` passa por PR humano com `tests/smoke/` verde.
 
 ### Prontidão da fase

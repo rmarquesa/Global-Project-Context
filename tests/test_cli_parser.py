@@ -76,3 +76,29 @@ def test_audit_cross_project_parser_supports_output_and_json() -> None:
     assert args.output == "docs/audit.md"
     assert args.json is True
     assert args.func.__name__ == "cmd_audit_cross_project"
+
+
+def test_graph_test_portfolio_parser_accepts_test_roots_and_persist() -> None:
+    args = parse_args(
+        [
+            "graph",
+            "test-portfolio",
+            "--project",
+            "gpc",
+            "--test-root",
+            "tests",
+            "--test-root",
+            "tests/smoke",
+            "--min-god-node-degree",
+            "5",
+            "--persist",
+            "--json",
+        ]
+    )
+
+    assert args.project == "gpc"
+    assert args.test_roots == ["tests", "tests/smoke"]
+    assert args.min_god_node_degree == 5
+    assert args.persist is True
+    assert args.json is True
+    assert args.func.__name__ == "cmd_graph_test_portfolio"

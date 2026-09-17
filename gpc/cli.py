@@ -483,6 +483,40 @@ def build_parser() -> argparse.ArgumentParser:
     audit_cross_project.add_argument("--json", action="store_true")
     audit_cross_project.set_defaults(func=cmd_audit_cross_project)
 
+    graph_parser = subparsers.add_parser(
+        "graph",
+        help="Graph-derived analysis tools (Fase 3.4 test portfolio).",
+    )
+    graph_subs = graph_parser.add_subparsers(dest="graph_cmd", required=True)
+
+    graph_test_portfolio = graph_subs.add_parser(
+        "test-portfolio",
+        help=(
+            "Report god nodes with external calls untested by any file under "
+            "--test-root, and rationale_for edges with a missing target."
+        ),
+    )
+    graph_test_portfolio.add_argument("--project", required=True)
+    graph_test_portfolio.add_argument(
+        "--test-root",
+        dest="test_roots",
+        action="append",
+        help="Directory (relative to the repo root) to scan for coverage. Repeatable.",
+    )
+    graph_test_portfolio.add_argument(
+        "--min-god-node-degree",
+        type=int,
+        default=10,
+        help="Minimum graph degree for a node to be considered a god node.",
+    )
+    graph_test_portfolio.add_argument(
+        "--persist",
+        action="store_true",
+        help="Write each gap as an info-severity row in gpc_drift_signals.",
+    )
+    graph_test_portfolio.add_argument("--json", action="store_true")
+    graph_test_portfolio.set_defaults(func=cmd_graph_test_portfolio)
+
     mcp_usage_parser = subparsers.add_parser(
         "mcp-usage", help="Summarize MCP tool-call usage without raw payloads."
     )
@@ -1516,6 +1550,36 @@ def cmd_audit_cross_project(args: argparse.Namespace) -> int:
         f"projects={audit['projects_audited']} critical_gaps={len(audit['critical_gaps'])} "
         f"report={audit['output_path']}"
     )
+    return 0
+
+
+def cmd_graph_test_portfolio(args: argparse.Namespace) -> int:
+    from gpc.graph_test_portfolio import DEFAULT_TEST_ROOTS, generate_test_portfolio_report
+
+    report = generate_test_portfolio_report(
+        args.project,
+        test_roots=tuple(args.test_roots) if args.test_roots else DEFAULT_TEST_ROOTS,
+        min_god_node_degree=args.min_god_node_degree,
+        persist=args.persist,
+    )
+    if args.json:
+        print(json.dumps(report, indent=2))
+        return 0
+    if not report.get("found"):
+        print(f"project={args.project} found=false")
+        return 0
+    print(
+        f"project={args.project} "
+        f"external_calls_checked={report['external_calls_checked']} "
+        f"external_calls_covered={report['external_calls_covered']} "
+        f"rationale_for_checked={report['rationale_for_checked']} "
+        f"rationale_for_dangling={report['rationale_for_dangling']} "
+        f"gaps={len(report['gaps'])}"
+    )
+    for gap in report["gaps"]:
+        print(f"  [{gap['check']}] {gap['label']}: {gap['detail']}")
+    if args.persist:
+        print(f"persisted={report.get('persisted', 0)}")
     return 0
 
 

@@ -72,3 +72,8 @@ graphify-out/
 *.bak
 *.backup
 *.gpc-backup-*
+
+# Fase 3.5 experimentation sandbox — auto-research prototypes never touch
+# gpc/ directly; promotion to gpc/ requires a human PR with tests/smoke/ green.
+/experiments/*
+!/experiments/README.md
