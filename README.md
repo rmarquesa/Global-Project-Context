@@ -423,8 +423,8 @@ examples and [the roadmap](docs/roadmap.md) for the evidence and lifecycle.
 ## Current TODOs
 
 The implementation roadmap is current in [docs/roadmap.md](docs/roadmap.md).
-The remaining work is intentionally operational rather than an unimplemented
-core feature:
+The remaining work to close the current local-first milestone is intentionally
+operational rather than an unimplemented core feature:
 
 - Onboard and validate two additional real projects, including one
   multi-repository project under a shared `project_slug`.
@@ -437,6 +437,13 @@ core feature:
 The previous Cloudflare-worker backend is not a planned onboarding target.
 GPC remains stack-agnostic; the concrete projects for this validation will be
 chosen when they are available.
+
+The roadmap also contains a **proposed**, not yet scheduled, commercial product
+phase. Its P0 TODOs are tenant isolation and authentication, lower-friction
+onboarding, billing/usage limits, security/compliance planning, and a licensing
+decision before any managed cloud offering. Read the Phase 4 section in
+[docs/roadmap.md](docs/roadmap.md) before treating those proposals as a delivery
+commitment.
 
 ## MCP Tools
 
