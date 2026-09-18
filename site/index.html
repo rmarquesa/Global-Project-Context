@@ -109,6 +109,7 @@
         <a href="#operations">Operations</a>
         <a href="#observability">Observability</a>
         <a href="#multi">Multi-repo</a>
+        <a href="#roadmap">Roadmap</a>
         <a href="#faq">FAQ</a>
         <a href="https://github.com/rmarquesa/Global-Project-Context" target="_blank" rel="noreferrer">GitHub</a>
       </nav>
@@ -129,8 +130,8 @@
           <p class="hero__plain">
             Chunks land in Postgres, vectors in Qdrant, embeddings from Ollama,
             and a consolidated Graphify knowledge graph in Neo4j. The canvas
-            behind this text is the real graph of this repository — 801 nodes,
-            1583 edges, 52 communities — not decoration.
+            behind this text is the real graph of this repository — 1,365 nodes,
+            3,575 edges, 57 communities — not decoration.
           </p>
           <div class="hero__actions" aria-label="Primary actions">
             <a class="button" href="#demo">See a live query</a>
@@ -489,6 +490,40 @@
             <p>Codex, Claude, Copilot and Gemini query the same project through the GPC MCP server.</p>
           </div>
         </div>
+      </section>
+
+      <section id="roadmap" class="section" aria-labelledby="roadmap-title">
+        <div class="section__intro">
+          <p class="kicker">Delivery status</p>
+          <h2 id="roadmap-title">Core capabilities are delivered. The remaining work is real-world validation.</h2>
+          <p class="section__lead">
+            GPC now includes cross-project auditing, graph freshness measurement,
+            longitudinal metrics, drift signals, human-reviewed auto-research,
+            and graph-derived test portfolios. It does not auto-merge proposals.
+          </p>
+        </div>
+        <div class="valueGrid">
+          <div>
+            <h3>Available now</h3>
+            <ul class="valueList">
+              <li><strong>Cross-project audit</strong><span><code>gpc audit cross-project</code> summarizes graph and convention findings.</span></li>
+              <li><strong>Continuous signals</strong><span><code>gpc metrics collect-all</code> and drift detection produce evidence, not automatic code changes.</span></li>
+              <li><strong>Test portfolio</strong><span><code>gpc graph test-portfolio</code> finds graph-derived coverage and rationale-integrity gaps.</span></li>
+            </ul>
+          </div>
+          <div>
+            <h3>Current TODOs</h3>
+            <ul class="valueList">
+              <li><strong>Onboard projects</strong><span>Validate two additional real projects, including one multi-repo project.</span></li>
+              <li><strong>Audit findings</strong><span>Run the audit across those projects and create issues for critical gaps.</span></li>
+              <li><strong>Close the learning loop</strong><span>Collect two weeks of metrics and merge one human-reviewed proposal.</span></li>
+            </ul>
+          </div>
+        </div>
+        <p class="section__lead">
+          The target is stack-agnostic: a Cloudflare backend is not required.
+          See the full, evidence-backed <a href="https://github.com/rmarquesa/Global-Project-Context/blob/main/docs/roadmap.md" target="_blank" rel="noreferrer">roadmap on GitHub</a>.
+        </p>
       </section>
 
       <section id="faq" class="section faqSection" aria-labelledby="faq-title">

@@ -47,6 +47,10 @@ For humans, the public commands are:
   - `gpc health-report --project <slug>`: summarize project health for operators.
   - `gpc mcp-usage --project <slug>`: audit MCP tool usage with redacted payload metadata.
   - `gpc maintenance doctor --project <slug>`: dry-run maintenance diagnostics only; no destructive cleanup.
+  - `gpc metrics collect-all`: collect longitudinal graph and index metrics for every registered project.
+  - `gpc metrics drift --project <slug>`: detect rule-based structural drift from collected metrics.
+  - `gpc graph test-portfolio --project <slug>`: report graph-derived test-coverage and rationale-integrity gaps.
+  - `gpc audit cross-project`: create a cross-project audit report with convention and graph findings.
 - `gpc-index`: index the current or given project.
 - `gpc-status`: inspect indexed state.
 - `gpc-search`: search project context.
@@ -66,7 +70,7 @@ admin modules live under `scripts/`. Smoke tests live under `tests/smoke/`.
 - [Observability](docs/observability.md) — Grafana dashboard and Postgres metrics.
 - [Quickstart with 3 projects](docs/quickstart-3-projects.md) — multi-repo example.
 - [Scripts](docs/scripts.md) — package and command inventory.
-- [Roadmap](docs/roadmap.md) — planned MCP graph tools, multi-project audit, and auto-research loop.
+- [Roadmap](docs/roadmap.md) — delivery status, remaining operational work, and the auto-research loop.
 
 Contributor and security notes live in [CONTRIBUTING.md](CONTRIBUTING.md) and
 [SECURITY.md](SECURITY.md). Release notes are in [CHANGELOG.md](CHANGELOG.md).
@@ -398,6 +402,41 @@ retrieval (e.g. *which worker calls which service*).
 
 Setup steps, environment variables and Cypher examples live in
 [docs/graphify.md](docs/graphify.md).
+
+### 7. Observe Improvement Opportunities
+
+GPC can collect longitudinal self-metrics, detect structural drift, generate a
+human-reviewable improvement proposal, and report graph-derived test gaps:
+
+```bash
+gpc metrics collect-all
+gpc metrics drift --project project-slug
+venv/bin/python scripts/auto_research.py --project project-slug
+gpc graph test-portfolio --project project-slug --persist
+```
+
+`auto_research.py` only writes a Markdown proposal under
+[`docs/proposals/`](docs/proposals/); it never changes code, opens pull
+requests, or merges anything. See [Operations](docs/operations.md) for cron
+examples and [the roadmap](docs/roadmap.md) for the evidence and lifecycle.
+
+## Current TODOs
+
+The implementation roadmap is current in [docs/roadmap.md](docs/roadmap.md).
+The remaining work is intentionally operational rather than an unimplemented
+core feature:
+
+- Onboard and validate two additional real projects, including one
+  multi-repository project under a shared `project_slug`.
+- Run the cross-project audit after those projects are indexed and create
+  issues for any critical findings.
+- Collect self-metrics through at least two weeks of real runs.
+- Promote one auto-research proposal through human review and merge it as a
+  normal pull request.
+
+The previous Cloudflare-worker backend is not a planned onboarding target.
+GPC remains stack-agnostic; the concrete projects for this validation will be
+chosen when they are available.
 
 ## MCP Tools
 
