@@ -539,6 +539,122 @@ para `gpc/` passa por PR humano com `tests/smoke/` verde.
 
 ---
 
+## Fase 4 — Produto comercial e monetização (proposta)
+
+**Objetivo.** Evoluir o GPC de ferramenta local-first para um produto que
+possa ser comercializado (self-host pago + cloud gerenciado), competindo no
+nicho de contexto/memória para ferramentas de IA como Copilot, Codex e
+Claude, sem abrir mão da premissa atual de MCP read-only e honestidade de
+confidence.
+
+Esta fase é estratégica/de negócio, não só técnica. As subseções abaixo
+seguem o mesmo formato das fases anteriores (objetivo, entregáveis, arquivos,
+prontidão), mas cobrem também decisões de arquitetura de produto, pricing e
+licenciamento.
+
+### 4.1 Multi-tenant e autenticação (P0)
+
+- [ ] Introduzir `workspace_id`/`tenant_id` em todas as tabelas Postgres,
+      coleções Qdrant e labels Neo4j hoje isolados só por `project_slug`.
+- [ ] Login (OAuth GitHub/Google) e API keys por projeto, com rotação.
+- [ ] Permissões por workspace (owner/editor/viewer).
+- Arquivos prováveis: `gpc/db.py`, `migrations/`, novo módulo `gpc/auth.py`,
+  `gpc/mcp_server.py` (gate de autenticação antes de cada tool).
+
+### 4.2 Onboarding de baixa fricção (P0)
+
+- [ ] Empacotar Postgres/Qdrant/Neo4j/Ollama num instalador único
+      (binário ou imagem tudo-em-um), reduzindo a dependência de editar
+      `.env` e rodar `docker compose` manualmente.
+- [ ] `gpc login` / `gpc cloud` para o modo hospedado, com auto-config do
+      MCP no client de IA detectado.
+- [ ] Expandir `gpc install-clients` para cobrir extensões nativas de VS
+      Code e JetBrains, não só edição de config JSON.
+- Arquivos: `install.sh`, `gpc/cli.py`, novo módulo de provisioning cloud.
+
+### 4.3 Billing e planos (P0)
+
+- [ ] Integração com um provedor de billing (ex.: Stripe) e medição de uso
+      (chunks indexados, tokens retornados, chamadas MCP por período).
+- [ ] Planos Free / Pro / Team-Enterprise (ver tabela abaixo).
+- [ ] Enforcement de limites do plano Free (nº de projetos, retenção de
+      métricas) sem quebrar a promessa de dados no Postgres do usuário no
+      modo self-host.
+
+| Camada | Free | Pro (pago) | Team/Enterprise |
+|---|---|---|---|
+| Indexação local self-host | Ilimitada | Ilimitada | Ilimitada |
+| Nº de projetos | Limitado (ex.: 3) | Ilimitado | Ilimitado |
+| Busca semântica + contexto MCP | Básica | Com reranking | Com reranking + SLA |
+| Grafo de relações (Neo4j) | Limitado/ausente | Sim | Sim + cross-repo avançado |
+| Cloud hospedado | Não | Opcional | Padrão |
+| SSO / múltiplos usuários | Não | Não | Sim |
+| Suporte | Comunidade | E-mail | Dedicado + SLA |
+| Observabilidade/auditoria | Básica (Grafana atual) | Completa | Completa + retenção customizada |
+
+### 4.4 Segurança e compliance (P0)
+
+- [ ] Criptografia em repouso para o modo cloud.
+- [ ] Expandir a redação de segredos hoje presente no indexer para cobrir
+      relatório de segurança vendável a empresas (referenciar
+      [SECURITY.md](../SECURITY.md)).
+- [ ] Avaliar trilha para certificação (ex.: SOC 2) se o modo cloud avançar.
+
+### 4.5 Paridade competitiva com Augment (P1)
+
+- [ ] Indexação incremental via file watcher, além dos hooks de Git
+      (`post-commit`/`post-merge`/`post-checkout` hoje existentes), para
+      refletir edições ainda não commitadas.
+- [ ] Reranking e busca híbrida (léxica + semântica) sobre a busca vetorial
+      pura atual em Qdrant; expandir `gpc eval-search` para medir recall@k
+      continuamente contra essas mudanças.
+- [ ] Memória de decisões/ADRs e feedback de code review, equivalente ao
+      "Code Review Memory" do Augment, mantendo a mesma disciplina de
+      confidence tags já usada no grafo.
+- [ ] Dashboard web orientado a produto (além do Grafana técnico atual em
+      [observability/](../observability)), legível por gestores não
+      técnicos: economia de tokens, uso por cliente de IA, saúde do índice.
+- [ ] Decisão consciente sobre não competir em "agente que escreve código":
+      manter o GPC como camada de contexto que potencializa agentes
+      existentes (Copilot, Codex, Claude, Cursor, Windsurf) via MCP, em vez
+      de replicar o Cosmos/Auggie do Augment.
+
+### 4.6 Diferenciação defensável (P2)
+
+- [ ] Formalizar "privacidade por padrão" (100% local opcional,
+      zero-retention no modo self-host) como proposta de valor central
+      contra o processamento em nuvem do Augment.
+- [ ] Reforçar interoperabilidade universal via MCP como diferencial
+      ("funciona com qualquer cliente MCP") frente ao ecossistema mais
+      fechado do Augment (Cosmos, Auggie).
+- [ ] Tratar o grafo cross-repo (Neo4j/Graphify) como feature premium —
+      já mais explícito publicamente do que o equivalente documentado pelo
+      Augment.
+
+### Licenciamento (decisão bloqueante antes de vender o modo cloud)
+
+O GPC está sob **AGPLv3** ([LICENSE](../LICENSE), [NOTICE.md](../NOTICE.md)).
+A AGPL obriga a disponibilizar o código-fonte de qualquer versão modificada
+rodando como serviço de rede — isso afeta diretamente a Fase 4.2 (cloud
+hospedado). Antes de lançar o modo cloud pago, decidir entre:
+
+- Manter tudo em AGPL e vender apenas suporte/hospedagem gerenciada (modelo
+  "aberto com serviço pago"); ou
+- Adotar um modelo open-core: núcleo em AGPL (ou MIT) e extensões/SaaS sob
+  licença comercial separada.
+
+### Prontidão da fase
+
+- [ ] Multi-tenant + autenticação funcionando em ambiente de staging.
+- [ ] Ao menos um plano pago cobrando via billing real.
+- [ ] Onboarding ponta a ponta (install → login → primeiro projeto indexado
+      → primeira resposta MCP) medido em menos de 10 minutos sem suporte
+      manual.
+- [ ] Decisão de licenciamento documentada e comunicada em
+      [NOTICE.md](../NOTICE.md) antes do primeiro cliente pago do modo cloud.
+
+---
+
 ## Fora do escopo declarado
 
 Coisas que já foram consideradas e conscientemente adiadas. Não são "TODO",
