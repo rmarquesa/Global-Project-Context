@@ -111,30 +111,32 @@ function escapeHtml(s) {
 
 async function runQuery(q, ui) {
   const { requestEl, responseEl, savedEl, beforeEl, afterEl, status, toolTag } = ui;
+  // Bundled recordings use MCP wire names; retain older dotted labels too.
+  const tool = q.tool.replace(/^gpc\./, "gpc_");
 
   // status + tool tag
   toolTag.textContent = q.tool;
-  status.textContent = "sending request…";
+  status.textContent = "replaying recorded request…";
   status.dataset.state = "sending";
 
   // Request: typewriter
   await typeInto(requestEl, formatJson(q.request), TYPE_SPEED);
 
-  status.textContent = "embedding query · querying Qdrant · hydrating from Postgres…";
+  status.textContent = "loading bundled response · no backend connection…";
   await new Promise((r) => setTimeout(r, 500));
 
   // Response: streamed
   responseEl.innerHTML = "";
-  if (q.tool === "gpc.search") {
+  if (tool === "gpc_search") {
     const cards = q.results.map(makeResultCard);
     await streamChildren(responseEl, cards, 220);
-  } else if (q.tool === "gpc.graph_neighbors") {
+  } else if (tool === "gpc_graph_neighbors") {
     const ul = document.createElement("ul");
     ul.className = "demoNeighbors";
     responseEl.appendChild(ul);
     const rows = q.results.map(makeNeighborRow);
     await streamChildren(ul, rows, 90);
-  } else if (q.tool === "gpc.graph_path") {
+  } else if (tool === "gpc_graph_path") {
     const ul = document.createElement("ul");
     ul.className = "demoPath";
     responseEl.appendChild(ul);
@@ -146,7 +148,7 @@ async function runQuery(q, ui) {
   }
 
   // Tokens
-  status.textContent = "response complete";
+  status.textContent = "recorded response complete";
   status.dataset.state = "done";
   animateNumber(beforeEl, 0, q.tokens_before, 900);
   animateNumber(afterEl, 0, q.tokens_after, 900);

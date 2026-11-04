@@ -1,6 +1,35 @@
 from __future__ import annotations
 
+import builtins
+import json
+import math
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+import gpc.search_eval as evaluation
 from gpc.search_eval import SearchEvalCase, compute_search_eval
+
+
+@pytest.fixture(autouse=True)
+def embedding_metadata(monkeypatch):
+    monkeypatch.setattr(evaluation, "active_embedding_model", lambda: "test-model")
+    monkeypatch.setattr(evaluation, "embedding_dimension", lambda: 16)
+
+
+def fixture_file(tmp_path, text):
+    path = tmp_path / "eval.yaml"
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def found(repo, path):
+    return SimpleNamespace(repo_slug=repo, relative_path=path)
+
+
+def forbidden(*args, **kwargs):
+    raise AssertionError("unexpected backend or embedding call")
 
 
 def test_compute_search_eval_counts_expected_path_hits() -> None:
@@ -39,3 +68,383 @@ def test_compute_search_eval_marks_query_with_no_results_as_missing() -> None:
     assert report.summary["hits"] == 0
     assert report.results[0].hit_paths == []
     assert report.results[0].missing_expected_paths == ["README.md"]
+
+
+def test_rank_metrics_and_duplicate_results() -> None:
+    report = compute_search_eval(
+        [SearchEvalCase("q", ["b", "a", "b"])],
+        results_by_query={"q": ["x", "b", "b", "a"]},
+        k=4,
+        dimensions=0,
+    )
+    assert report.summary["mrr_at_k"] == 0.5
+    assert report.summary["ndcg_at_k"] == (
+        1 / 1.584962500721156 + 1 / 2.321928094887362
+    ) / (1 + 1 / 1.584962500721156)
+    assert report.results[0].expected_paths == ["b", "a"]
+
+
+def test_zero_dimensions_do_not_probe_embedding_and_k_must_be_positive(
+    monkeypatch,
+) -> None:
+    import gpc.search_eval as evaluation
+
+    monkeypatch.setattr(
+        evaluation,
+        "embedding_dimension",
+        lambda: (_ for _ in ()).throw(AssertionError()),
+    )
+    report = compute_search_eval(
+        [], results_by_query={}, k=1, dimensions=0, mode="lexical"
+    )
+    assert report.dimensions == 0
+    assert report.summary["ndcg_at_k"] == 0
+    import pytest
+
+    with pytest.raises(ValueError):
+        compute_search_eval([], results_by_query={}, k=0)
+
+
+def test_runner_legacy_unqualified_labels_and_qualified_reporting(
+    tmp_path, monkeypatch
+):
+    fixture = fixture_file(
+        tmp_path,
+        'queries:\n  - query: "legacy"\n    expected_paths:\n      - "src/config.py"\n',
+    )
+    monkeypatch.setattr(
+        evaluation,
+        "search_project_context",
+        lambda *a, **kw: (None, [found("repo-a", "src/config.py")]),
+    )
+    report = evaluation.run_search_eval("p", fixture)
+    assert report.summary["recall_at_k"] == 1
+    assert report.summary["ndcg_at_k"] == 1
+    assert report.results[0].result_paths == ["repo-a:src/config.py"]
+    assert report.results[0].hit_paths == ["src/config.py"]
+    assert report.results[0].missing_expected_paths == []
+    # Filtering is a retrieval concern, not a rewrite of fixture labels.
+    scoped = compute_search_eval(
+        [SearchEvalCase("q", ["x"], repo="r")],
+        results_by_query={"q": ["x"]},
+        k=1,
+        dimensions=0,
+    )
+    assert scoped.summary["recall_at_k"] == 1
+
+
+@pytest.mark.parametrize("repo,hit", [("wrong", 0), ("right", 1)])
+def test_qualified_labels_do_not_match_another_repo(repo, hit):
+    report = compute_search_eval(
+        [SearchEvalCase("q", ["right:same.py"])],
+        results_by_query={"q": [f"{repo}:same.py"]},
+        k=1,
+        dimensions=0,
+    )
+    assert report.summary["hits"] == hit
+
+
+def test_mixed_labels_duplicates_and_known_binary_ndcg():
+    report = compute_search_eval(
+        [SearchEvalCase("q", ["a.py", "r:a.py", "r:b.py", "r:b.py"])],
+        results_by_query={
+            "q": ["r:irrelevant", "r:a.py", "r:a.py", "r:b.py", "other:a.py"]
+        },
+        k=5,
+        provider="p",
+        model="m",
+        dimensions=0,
+    )
+    # Aliases at rank 2 produce one binary gain, duplicate chunks keep positions.
+    ideal = 1 + 1 / math.log2(3) + 1 / math.log2(4)
+    assert report.summary["ndcg_at_k"] == pytest.approx(
+        (1 / math.log2(3) + 1 / math.log2(5)) / ideal
+    )
+    assert report.summary["mrr_at_k"] == 0.5
+    assert report.summary["hits"] == 3
+    assert 0 <= report.summary["ndcg_at_k"] <= 1
+    assert report.results[0].result_paths[2] == "r:a.py"
+
+
+def test_repeated_queries_preserve_repo_task_results_and_metadata(
+    tmp_path, monkeypatch
+):
+    fixture = fixture_file(
+        tmp_path,
+        """queries:
+  - query: "same"
+    expected_paths: ["one:x.py"]
+    repo: "one"
+    task: "debug"
+  - query: "same"
+    expected_paths: ["two:y.py"]
+    repo: ["two"]
+    task: "review"
+""",
+    )
+    calls = []
+
+    def search(query, **kwargs):
+        calls.append((query, kwargs))
+        return None, (
+            [found("one", "x.py")]
+            if kwargs["repo"] == "one"
+            else [found("two", "y.py")]
+        )
+
+    monkeypatch.setattr(evaluation, "search_project_context", search)
+    report = evaluation.run_search_eval(
+        "project", fixture, k=3, mode="hybrid", task="implement"
+    )
+    assert [r.result_paths for r in report.results] == [["one:x.py"], ["two:y.py"]]
+    assert [(r.repo, r.task) for r in report.results] == [
+        ("one", "debug"),
+        (["two"], "review"),
+    ]
+    assert [(kw["repo"], kw["task"], kw["limit"]) for _, kw in calls] == [
+        ("one", "debug", 3),
+        (["two"], "review", 3),
+    ]
+    assert report.summary["hits"] == 2
+    assert report.to_dict()["mode"] == "hybrid"
+    assert report.to_dict()["task"] == "implement"
+
+
+def test_lexical_runner_never_probes_embedding_metadata(tmp_path, monkeypatch):
+    fixture = fixture_file(
+        tmp_path, 'queries:\n  - query: "q"\n    expected_paths: ["x"]\n'
+    )
+    monkeypatch.setattr(evaluation, "active_embedding_model", forbidden)
+    monkeypatch.setattr(evaluation, "embedding_dimension", forbidden)
+    calls = []
+
+    def search(*args, **kwargs):
+        calls.append(kwargs)
+        return None, [found("r", "x")]
+
+    monkeypatch.setattr(evaluation, "search_project_context", search)
+    report = evaluation.run_search_eval("p", fixture, mode="lexical", task="test")
+    assert len(calls) == 1 and calls[0]["mode"] == "lexical"
+    assert report.to_dict()["embedding"] == {
+        "provider": "not_applicable",
+        "model": "not_applicable",
+        "dimensions": 0,
+    }
+    assert report.summary["mean_latency_ms"] >= 0
+    assert "not performance claims" in report.to_dict()["latency_note"]
+
+
+def test_compare_same_cases_distinct_modes_signed_deltas_json_safe(
+    tmp_path, monkeypatch
+):
+    fixture = fixture_file(
+        tmp_path,
+        """queries:
+  - query: "q1"
+    expected_paths: ["x"]
+  - query: "q2"
+    expected_paths: ["y"]
+    repo: "r"
+    task: "debug"
+""",
+    )
+    calls = []
+
+    def search(query, **kwargs):
+        calls.append((query, kwargs.copy()))
+        path = "x" if query == "q1" else "y"
+        return None, [found("r", path if kwargs["mode"] == "hybrid" else "miss")]
+
+    monkeypatch.setattr(evaluation, "search_project_context", search)
+    ticks = iter([0, 0.004, 1, 1.004, 2, 2.002, 3, 3.002])
+    monkeypatch.setattr(evaluation.time, "perf_counter", lambda: next(ticks))
+    comparison = evaluation.compare_search_eval("p", fixture, k=2, task="review")
+    assert [kw["mode"] for _, kw in calls] == [
+        "semantic",
+        "semantic",
+        "hybrid",
+        "hybrid",
+    ]
+    assert [
+        (q, {k: v for k, v in kw.items() if k != "mode"}) for q, kw in calls[:2]
+    ] == [(q, {k: v for k, v in kw.items() if k != "mode"}) for q, kw in calls[2:]]
+    assert [r["query"] for r in comparison["baseline"]["results"]] == ["q1", "q2"]
+    assert comparison["delta"]["recall_at_k"] == 1
+    assert comparison["delta"]["mean_latency_ms"] == -2
+    assert comparison["delta"]["p95_latency_ms"] == -2
+    assert comparison["baseline"]["k"] == comparison["candidate"]["k"] == 2
+    for metric, delta in comparison["delta"].items():
+        assert (
+            delta
+            == comparison["candidate"]["summary"][metric]
+            - comparison["baseline"]["summary"][metric]
+        )
+    json.dumps(comparison, allow_nan=False)
+
+
+@pytest.mark.parametrize(
+    "options", [{"k": 0}, {"k": -2}, {"mode": "unknown"}, {"task": "unknown"}]
+)
+def test_invalid_options_fail_before_calls_even_empty_fixture(
+    tmp_path, monkeypatch, options
+):
+    fixture = fixture_file(tmp_path, "queries: []\n")
+    for name in (
+        "search_project_context",
+        "active_embedding_model",
+        "embedding_dimension",
+    ):
+        monkeypatch.setattr(evaluation, name, forbidden)
+    with pytest.raises(ValueError):
+        evaluation.run_search_eval("p", fixture, **options)
+    with pytest.raises(ValueError):
+        compute_search_eval([], results_by_query={}, **({"k": 1} | options))
+
+
+def test_invalid_case_override_fails_before_any_search(tmp_path, monkeypatch):
+    fixture = fixture_file(
+        tmp_path,
+        'queries:\n  - query: "valid"\n  - query: "invalid"\n    task: "unknown"\n',
+    )
+    monkeypatch.setattr(evaluation, "search_project_context", forbidden)
+    with pytest.raises(ValueError, match="task"):
+        evaluation.run_search_eval("p", fixture)
+
+
+@pytest.mark.parametrize("options", [{"k": 0}, {"k": -1}, {"task": "unknown"}])
+def test_compare_validates_before_loading_or_backend(monkeypatch, options):
+    monkeypatch.setattr(evaluation, "load_search_eval_fixture", forbidden)
+    monkeypatch.setattr(evaluation, "search_project_context", forbidden)
+    with pytest.raises(ValueError):
+        evaluation.compare_search_eval("p", "unused", **options)
+
+
+def test_empty_lexical_fixture_is_safe_without_backends(tmp_path, monkeypatch):
+    fixture = fixture_file(tmp_path, "queries: []\n")
+    for name in (
+        "search_project_context",
+        "active_embedding_model",
+        "embedding_dimension",
+    ):
+        monkeypatch.setattr(evaluation, name, forbidden)
+    report = evaluation.run_search_eval("p", fixture, mode="lexical")
+    assert report.results == []
+    assert all(value == 0 for value in report.summary.values())
+
+
+def test_empty_labels_cases_and_nearest_rank_latency():
+    empty = compute_search_eval(
+        [], results_by_query={}, k=1, provider="p", model="m", dimensions=0
+    )
+    assert all(value == 0 for value in empty.summary.values())
+    report = compute_search_eval(
+        [SearchEvalCase("q", [])],
+        results_by_query={"q": ["x"]},
+        k=1,
+        provider="p",
+        model="m",
+        dimensions=0,
+        latency_by_query={"q": 12},
+    )
+    assert report.summary["query_hit_rate"] == 0
+    assert report.summary["mrr_at_k"] == report.summary["ndcg_at_k"] == 0
+    assert report.summary["mean_latency_ms"] == report.summary["p95_latency_ms"] == 12
+    rows = [SearchEvalCase(str(i), []) for i in range(20)]
+    timed = compute_search_eval(
+        rows,
+        results_by_query={},
+        k=1,
+        provider="p",
+        model="m",
+        dimensions=0,
+        latency_by_query={str(i): i + 1 for i in range(20)},
+    )
+    assert timed.summary["mean_latency_ms"] == 10.5
+    assert timed.summary["p95_latency_ms"] == 19
+
+
+def test_explicit_metadata_including_zero_dimensions_is_deterministic(monkeypatch):
+    monkeypatch.setattr(evaluation, "active_embedding_model", forbidden)
+    monkeypatch.setattr(evaluation, "embedding_dimension", forbidden)
+    kwargs = dict(
+        results_by_query={"q": ["x"]}, k=1, provider="p", model="m", dimensions=0
+    )
+    first = compute_search_eval([SearchEvalCase("q", ["x"])], **kwargs)
+    assert (
+        first.to_dict()
+        == compute_search_eval([SearchEvalCase("q", ["x"])], **kwargs).to_dict()
+    )
+    assert first.dimensions == 0
+
+
+FIXTURE_TEXT = """queries:
+  - query: "legacy"
+    expected_paths:
+      - "src/a.py"
+    task: "debug"
+    repo: "one"
+  - query: "inline"
+    repo: [one, "two"]
+    expected_paths: []
+  - query: "block"
+    repo:
+      - "one"
+      - "two"
+    expected_paths:
+      - "two:src/b.py"
+    task: "test"
+"""
+
+
+def test_yaml_and_fallback_fixture_equivalence(tmp_path):
+    yaml = pytest.importorskip("yaml")
+    fixture = fixture_file(tmp_path, FIXTURE_TEXT)
+    assert evaluation.load_search_eval_fixture(
+        fixture
+    ) == evaluation._parse_simple_fixture(FIXTURE_TEXT)
+    assert evaluation._parse_simple_fixture(
+        FIXTURE_TEXT
+    ) == evaluation._cases_from_payload(yaml.safe_load(FIXTURE_TEXT))
+    assert evaluation.load_search_eval_fixture(fixture)[1].repo == ["one", "two"]
+
+
+def test_actual_packaged_fixture_without_yaml(monkeypatch):
+    original = builtins.__import__
+
+    def no_yaml(name, *args, **kwargs):
+        if name == "yaml":
+            raise ImportError("optional dependency unavailable")
+        return original(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", no_yaml)
+    path = Path(__file__).parent / "fixtures" / "hybrid_search_eval.yaml"
+    cases = evaluation.load_search_eval_fixture(path)
+    assert len(cases) == 4
+    assert cases[-1].expected_paths == ["repo-a:src/config.py"]
+    assert cases[-1].repo == "repo-a"
+    fixture_cases = evaluation._parse_simple_fixture(FIXTURE_TEXT)
+    assert [c.repo for c in fixture_cases] == ["one", ["one", "two"], ["one", "two"]]
+    assert fixture_cases[0].expected_paths == ["src/a.py"]
+    assert fixture_cases[0].task == "debug"
+    assert fixture_cases[1].expected_paths == []
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "other: []",
+        "queries: invalid",
+        "queries:\n  - expected_paths: []",
+        'queries:\n  - query: "q"\n    expected_paths: "not a list"',
+        'queries:\n  - query: "q"\n    repo: [one, [two]]',
+        'queries:\n  - query: "q"\n    task: "unknown"',
+        'queries:\n  - query: "q"\n    extra: []',
+        'queries:\n  - query: "q"\n    expected_paths: ["unterminated]',
+    ],
+)
+def test_malformed_fixtures_fail_clearly_with_both_parsers(tmp_path, text):
+    with pytest.raises(ValueError):
+        evaluation._parse_simple_fixture(text)
+    path = fixture_file(tmp_path, text)
+    with pytest.raises(ValueError):
+        evaluation.load_search_eval_fixture(path)

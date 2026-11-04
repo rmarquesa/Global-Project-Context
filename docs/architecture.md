@@ -2,7 +2,7 @@
 
 GPC is a local persistent context layer for AI coding tools. It separates
 durable records, semantic retrieval, graph traversal and client access behind a
-single read-only MCP server.
+single MCP server that does not edit project source or indexes.
 
 ## Overview
 
@@ -20,7 +20,8 @@ GPC MCP server (gpc/mcp_server.py)
 ```
 
 Indexing and embedding writes go through the CLI or per-project Git hooks.
-The MCP server itself is read-only.
+The MCP server does not mutate source or indexes. Usage telemetry and explicit
+metrics/drift collection options can persist operational records.
 
 ## Components
 
@@ -212,9 +213,13 @@ Passing `project` or `cwd` explicitly is the most reliable cross-client mode.
 
 ## Automation Boundary
 
-The MCP surface is intentionally read-only. Writes happen through:
+MCP retrieval does not mutate source indexes or decision memory. Operational
+logging and optional metrics/drift collection can write diagnostic records.
+Index and memory writes happen explicitly through:
 
 - `gpc-index` — manual indexing.
+- `gpc watch` — optional foreground reconciliation of a registered Git worktree.
+- `gpc decision capture/approve/invalidate` — evidence-backed memory curation.
 - `gpc init` — registers the project, installs Git hooks, runs the first index.
 - `post-commit`, `post-merge`, `post-checkout` Git hooks — incremental
   reindexing in the background, logged to `.gpc/index.log`.
@@ -226,14 +231,18 @@ explicit and inspectable.
 
 ## MCP Surface
 
-The current server exposes seventeen read-only tools across five surfaces:
+The server exposes the following surfaces:
 
 - **Identity / discovery** — `gpc_health`, `gpc_resolve_project`,
   `gpc_resolve_repo`, `gpc_list_projects`, `gpc_list_repos`,
   `gpc_index_status`.
-- **Semantic retrieval** — `gpc_search`, `gpc_context`,
-  `gpc_estimate_token_savings`. These run over Qdrant embeddings and accept
-  an optional `repo` filter.
+- **Source retrieval** — `gpc_search`, `gpc_context` support semantic (default),
+  lexical and hybrid modes with optional repo filters and task preferences.
+  `gpc_estimate_token_savings` retains its semantic estimation workflow.
+- **Decision memory** — `gpc_decisions` retrieves approved, current evidence
+  by default. Diagnostic reads can include pending or obsolete guidance with
+  explicit status/freshness. Writes and transitions stay in the CLI; see
+  [Decision memory](decision-memory.md).
 - **Structural queries** — `gpc_graph_neighbors`, `gpc_graph_summary`,
   `gpc_graph_path`, `gpc_graph_community`. These read the Neo4j Graphify
   projection and expose `confidence` on every edge; by default only

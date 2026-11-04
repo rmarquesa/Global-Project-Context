@@ -25,10 +25,11 @@ keeps that memory outside the chat:
 
 ## Status
 
-Early-stage, local-first, read-only MCP surface.
+Early-stage, local-first MCP surface: read-only for project source and indexes.
 
 Indexing can be run manually with `gpc-index` or installed as Git hooks in each
-project with `gpc init`. The MCP server retrieves context but does not mutate
+project with `gpc init`. An optional foreground `gpc watch` also reconciles edits
+before commits. The MCP server retrieves context but does not mutate
 indexes directly.
 
 ## Main Entrypoints
@@ -42,7 +43,10 @@ For humans, the public commands are:
   - `gpc doctor`: dependency-level checks for the local workstation.
   - `gpc verify --project <slug>`: project context health across Postgres, Qdrant, Ollama, Neo4j, Graphify, staleness, and index state.
   - `gpc stale --project <slug>`: compare Git-visible files, indexed files, mtimes, and Graphify report freshness.
+  - `gpc watch [path]`: optionally keep a registered Git worktree indexed during editing, with debouncing, retry and branch-change detection.
   - `gpc eval-search --project <slug> --fixture <file>`: run repeatable search-quality checks.
+  - `gpc search <query> --mode hybrid --task debug`: combine lexical and semantic candidates with explicit task preferences (semantic remains the default).
+  - `gpc decision`: explicitly capture, approve, inspect or invalidate source-backed engineering decisions; MCP retrieval stays read-only for memory.
   - `gpc context-pack <query> --project <slug> --output pack.md`: write a cited Markdown context bundle for an AI handoff.
   - `gpc health-report --project <slug>`: summarize project health for operators.
   - `gpc mcp-usage --project <slug>`: audit MCP tool usage with redacted payload metadata.
@@ -65,6 +69,9 @@ admin modules live under `scripts/`. Smoke tests live under `tests/smoke/`.
 - [Operations](docs/operations.md) — install, validate, reset, index.
 - [MCP clients](docs/mcp-clients.md) — server tools, client setup, troubleshooting.
 - [Automation](docs/automation.md) — global CLI shims and per-project Git hooks.
+- [Automatic local indexing](docs/watcher.md) — foreground watcher, recovery and worktree isolation.
+- [Hybrid retrieval](docs/hybrid-search.md) — lexical/vector fusion, task preferences and comparative evaluation.
+- [Decision memory](docs/decision-memory.md) — evidence-backed proposals, explicit approval, retrieval and invalidation.
 - [Graphify and Neo4j](docs/graphify.md) — relationship-graph consolidation.
 - [Token economy](docs/token-economy.md) — what GPC saves and how it is measured.
 - [Observability](docs/observability.md) — Grafana dashboard and Postgres metrics.
@@ -92,7 +99,7 @@ GPC separates indexing, storage, retrieval, and AI-client access.
 ```text
 project folder
   |
-  | gpc init / gpc-index / Git hooks
+  | gpc init / gpc-index / gpc watch / Git hooks
   v
 GPC indexer
   |
@@ -136,10 +143,14 @@ in the default database and separates it by `project_slug` and `repo_slug`.
 This lets one logical project consolidate Graphify graphs from multiple Git
 repositories.
 
-The MCP server is intentionally read-only. AI tools can ask for health,
+The MCP server does not edit project source or indexes. AI tools can ask for health,
 project resolution, status, search results, compact context, and token-savings
 estimates. Index writes happen through `gpc-index`, `gpc init`, or project Git
 hooks.
+
+Read-only does not mean zero database writes: usage logging is best-effort,
+and explicit `gpc_self_metrics(collect=true)` or
+`gpc_drift_signals(detect=true, persist=true)` calls persist operational data.
 
 ## Token Savings
 
@@ -447,7 +458,7 @@ commitment.
 
 ## MCP Tools
 
-The MCP server exposes seventeen read-only tools:
+The MCP server exposes seventeen context and operational tools (none edits project source or indexes):
 
 - `gpc_health` — service availability.
 - `gpc_resolve_project` — look up a project by `cwd` or slug.
@@ -483,6 +494,9 @@ open site/index.html
 ```
 
 The landing page is static and can be published with any static hosting setup.
+Feature changes must update both their documentation and the relevant product-site
+copy, examples and roadmap status. Site changes are not a deployment; keep claims
+aligned with verified implementation and clearly identify validation still pending.
 
 ## Security
 

@@ -47,9 +47,14 @@ What GPC **does** protect against:
 - **Accidental indexing of common secret files**. The indexer skips files such
   as `.env`, `.npmrc`, `.pypirc`, `.netrc`, private keys, certificates and
   files matching obvious credential patterns by default.
-- **Accidental indexing of obvious secret-like content**. Lines that look like
+- **Accidental indexing of obvious secret-like content**. Files containing
   AWS access key IDs, long API keys, long tokens, long password assignments and
-  PEM blocks are skipped at chunking time.
+  PEM blocks are skipped before chunking, embedding or persistence. The complete
+  accepted file is checked (the default discovery size limit is 512,000 bytes).
+- **Accidental symlink traversal**. Discovery excludes symlink files and symlink
+  ancestors by default. Explicit `follow_symlinks` opt-in only permits in-root
+  targets that also pass ignore and filename policies; external targets are
+  always rejected. Do not mutate the source tree concurrently with indexing.
 - **Embedding leakage to third parties**. The default embedding path uses a
   local Ollama installation. No source code or notes are sent to a remote API
   unless you explicitly change this.
@@ -69,31 +74,49 @@ What GPC **does not** protect against:
 
 ## Operational Guidance
 
-### MCP HTTP exposure
+### Local network defaults and MCP HTTP exposure
 
-`gpc-mcp-http` defaults to `127.0.0.1:8765`. **Do not bind it to a public
-interface** without putting an authenticating reverse proxy in front of it. The
-MCP server is read-only but still returns indexed chunks of your code.
+The `gpc-mcp-http` CLI defaults to `127.0.0.1:8765`. Docker Compose also publishes
+all host ports on `127.0.0.1`, including Postgres, Qdrant (HTTP/gRPC), Neo4j
+(HTTP/Bolt), the optional MCP HTTP profile and optional Grafana profile. The HTTP
+process inside its container listens on `0.0.0.0` so container networking works;
+that is not a public host bind. These defaults do not isolate services from other
+containers on the Compose network or from other local users.
+
+**Do not expose services publicly.** Remote access is an explicit deployment
+choice: use an authenticated TLS reverse proxy (or authenticated tunnel),
+nondefault service credentials and appropriate firewall rules. A separate Compose
+override can replace a port's `host_ip` deliberately; keep backend ports on
+loopback and expose only the authenticated proxy, not raw database or MCP ports.
+Changing the `GPC_*_PORT` variables only changes port numbers, not the loopback
+binding. Compose/network overrides are the operator's responsibility.
+
+MCP retrieval does not edit source files or indexed content, but it returns
+indexed chunks of your code. Optional metrics and drift flags can persist
+operational data; "read-only retrieval" does not mean no database writes at all.
 
 ```bash
 # Safe: localhost only.
 gpc-mcp-http --host 127.0.0.1 --port 8765
 
-# Risky: reachable from the network. Add auth in front.
+# Explicit remote deployment only: protect with an authenticated proxy and firewall.
 gpc-mcp-http --host 0.0.0.0 --port 8765
 ```
 
 ### Default credentials
 
-The `.env.example` ships with development passwords for Postgres and Neo4j:
+The `.env.example` ships with development passwords for Postgres and Neo4j
+(Compose also has development Grafana credentials):
 
 ```env
 GPC_POSTGRES_PASSWORD=gpcpass
 GPC_NEO4J_PASSWORD=gpcneo4jpass
 ```
 
-Change them before running GPC on a shared machine, and never reuse them on
-production-facing infrastructure.
+Change all shipped credentials before running GPC on a shared machine or enabling
+remote access, and never reuse them on production-facing infrastructure. Loopback
+binding is not authentication; the default Qdrant/MCP setup is not a multi-tenant
+or authenticated SaaS boundary.
 
 GPC helps enforce this: at MCP server startup and in `gpc doctor`, it emits a
 warning when the shipped default Postgres or Neo4j password is used against a
@@ -117,6 +140,20 @@ project's data and tighten the ignore rules:
 ```bash
 gpc-index /path/to/project --slug <slug> --reset
 ```
+
+### Decision memory
+
+Decision capture and approval are explicit CLI writes. The MCP decision tool
+retrieves approved/current evidence by default; diagnostic inactive results are
+not endorsed instructions. Stored text remains untrusted retrieved data, even
+after human approval. Never interpret it as higher-priority system instructions.
+
+Actor names are local attribution labels, not authenticated principals. The
+workflow is not multi-tenant authorization or a tamper-proof audit trail. Source
+hash checks refer to indexed evidence, not necessarily current disk contents;
+caller-provided revision labels are not verified commits. Recognized secrets are
+screened during capture, but users must still review free-form decision text.
+See [decision memory](docs/decision-memory.md) for lifecycle and scope limits.
 
 ### Dependencies
 

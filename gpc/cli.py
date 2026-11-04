@@ -2,15 +2,19 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 from pathlib import Path
 import shutil
+import signal as signal_module
 import subprocess
 import sys
+from threading import Event
 from typing import Sequence
 
 
 from gpc.db import get_qdrant, pg_connection
+from gpc.decision_cli import register_decision_parser
 from gpc.config import (
     COLLECTION_NAME,
     MCP_HTTP_HOST,
@@ -21,7 +25,9 @@ from gpc.config import (
 )
 from gpc.embeddings import active_embedding_model, embedding_dimension
 from gpc.indexer import IndexOptions, index_project_path
+from gpc.index_lock import RepositoryBusyError
 from gpc.registry import (
+    ProjectResolutionError,
     add_project_alias,
     consolidate_projects,
     ensure_project,
@@ -29,8 +35,9 @@ from gpc.registry import (
     list_repos,
     normalize_slug,
     register_repo,
+    resolve_repo,
 )
-from gpc.search import search_project_context
+from gpc.search import SEARCH_MODES, SEARCH_TASKS, search_project_context
 from gpc.status import get_index_status
 from gpc.token_economy import estimate_for_project
 
@@ -41,7 +48,16 @@ MANAGED_HOOK_MARKER = "GPC managed hook"
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    return args.func(args)
+    try:
+        return args.func(args)
+    except RepositoryBusyError as exc:
+        print(f"gpc: {exc}", file=sys.stderr)
+        return 1
+    except (ValueError, FileNotFoundError) as exc:
+        if args.command not in {"search", "context-pack", "eval-search"}:
+            raise
+        print(f"gpc: {exc}", file=sys.stderr)
+        return 1
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -50,10 +66,33 @@ def build_parser() -> argparse.ArgumentParser:
         description="Global Project Context command line interface.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
+    register_decision_parser(subparsers)
 
     index_parser = subparsers.add_parser("index", help="Index a project into GPC.")
     add_index_args(index_parser)
     index_parser.set_defaults(func=cmd_index)
+
+    watch_parser = subparsers.add_parser(
+        "watch",
+        help="Opt in to foreground indexing of an already registered Git repository.",
+        description="Opt-in foreground indexing of an already registered Git repository; never autostarted.",
+    )
+    watch_parser.add_argument(
+        "path", nargs="?", default=".", help="Exact Git root path."
+    )
+    watch_parser.add_argument("--project", help="Existing project slug or alias.")
+    watch_parser.add_argument("--repo", help="Existing repo slug; requires --project.")
+    watch_parser.add_argument("--interval", type=_positive_delay, default=1.0)
+    watch_parser.add_argument("--debounce", type=_nonnegative_delay, default=1.0)
+    watch_parser.add_argument("--max-debounce", type=_positive_delay, default=10.0)
+    watch_parser.add_argument("--retry-interval", type=_positive_delay, default=5.0)
+    watch_parser.add_argument(
+        "--once", action="store_true", help="Run one immediate pass."
+    )
+    watch_parser.add_argument(
+        "--json", action="store_true", help="Emit JSON lines events."
+    )
+    watch_parser.set_defaults(func=cmd_watch)
 
     init_parser = subparsers.add_parser(
         "init",
@@ -123,7 +162,7 @@ def build_parser() -> argparse.ArgumentParser:
     stale_parser.set_defaults(func=cmd_stale)
 
     search_parser = subparsers.add_parser("search", help="Search indexed context.")
-    search_parser.add_argument("query", help="Semantic search query.")
+    search_parser.add_argument("query", help="Search query.")
     search_parser.add_argument("--project", help="Project slug or alias.")
     search_parser.add_argument(
         "--cwd", default=str(Path.cwd()), help="Project resolution cwd."
@@ -134,6 +173,13 @@ def build_parser() -> argparse.ArgumentParser:
     search_parser.add_argument(
         "--content-chars", type=int, default=700, help="Characters per result."
     )
+    search_parser.add_argument(
+        "--repo",
+        action="append",
+        help="Optional repo filter; repeat for multiple repos.",
+    )
+    search_parser.add_argument("--mode", choices=SEARCH_MODES, default="semantic")
+    search_parser.add_argument("--task", choices=SEARCH_TASKS, default="general")
     search_parser.set_defaults(func=cmd_search)
 
     context_pack_parser = subparsers.add_parser(
@@ -151,6 +197,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     context_pack_parser.add_argument("--max-chunks", type=int, default=8)
     context_pack_parser.add_argument("--max-chars", type=int, default=12000)
+    context_pack_parser.add_argument("--mode", choices=SEARCH_MODES, default="semantic")
+    context_pack_parser.add_argument("--task", choices=SEARCH_TASKS, default="general")
     context_pack_parser.add_argument(
         "--include-graph",
         action="store_true",
@@ -175,7 +223,7 @@ def build_parser() -> argparse.ArgumentParser:
     token_parser.set_defaults(func=cmd_token_savings)
 
     eval_search_parser = subparsers.add_parser(
-        "eval-search", help="Evaluate semantic search quality against a fixture."
+        "eval-search", help="Evaluate search quality against a fixture."
     )
     eval_search_parser.add_argument(
         "--project", required=True, help="Project slug or alias."
@@ -189,6 +237,12 @@ def build_parser() -> argparse.ArgumentParser:
     eval_search_parser.add_argument(
         "--json", action="store_true", help="Emit machine-readable JSON."
     )
+    eval_mode = eval_search_parser.add_mutually_exclusive_group()
+    eval_mode.add_argument("--mode", choices=SEARCH_MODES, default="semantic")
+    eval_mode.add_argument(
+        "--compare", action="store_true", help="Compare semantic baseline with hybrid."
+    )
+    eval_search_parser.add_argument("--task", choices=SEARCH_TASKS, default="general")
     eval_search_parser.set_defaults(func=cmd_eval_search)
 
     doctor_parser = subparsers.add_parser(
@@ -617,6 +671,138 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _nonnegative_delay(value: str) -> float:
+    try:
+        delay = float(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("delay must be a finite number") from exc
+    if not math.isfinite(delay) or delay < 0:
+        raise argparse.ArgumentTypeError("delay must be finite and nonnegative")
+    return delay
+
+
+def _positive_delay(value: str) -> float:
+    delay = _nonnegative_delay(value)
+    if delay == 0:
+        raise argparse.ArgumentTypeError("delay must be positive")
+    return delay
+
+
+def _watch_registration(root: Path, project: str | None, repo: str | None) -> tuple:
+    git = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "--show-toplevel"],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+    if git.returncode or not git.stdout.strip():
+        raise ValueError(f"Watch requires a Git worktree root: {root}")
+    git_root = Path(git.stdout.strip()).resolve(strict=True)
+    if git_root != root:
+        raise ValueError(
+            f"Watch requires the exact Git root; use: gpc watch {git_root}"
+        )
+    try:
+        resolved = resolve_repo(cwd=root, project=project, repo=repo)
+    except ProjectResolutionError as exc:
+        raise ProjectResolutionError(
+            f"{exc}. Register the exact Git root first with "
+            "gpc init --project <project> --repo <repo> --no-index."
+        ) from exc
+    project_row, repo_row = resolved["project"], resolved["repo"]
+    if repo_row is None:
+        matches = [
+            row
+            for row in list_repos(project_row["slug"])
+            if Path(row["root_path"]).expanduser().resolve() == root
+        ]
+        repo_row = matches[0] if len(matches) == 1 else None
+    if repo_row is None or Path(repo_row["root_path"]).expanduser().resolve() != root:
+        raise ValueError(
+            "Watch requires an existing repo registered at this exact root. "
+            "Register it with gpc init --project <project> --repo <repo> --no-index; "
+            "linked worktrees need a distinct repo slug."
+        )
+    return project_row, repo_row
+
+
+def cmd_watch(args: argparse.Namespace) -> int:
+    # Lazy import keeps parser/help independent of the optional foreground loop.
+    from gpc.watcher import WatchOptions, watch_project
+
+    def emit(event: dict) -> None:
+        if args.json:
+            print(json.dumps(event), flush=True)
+        else:
+            details = " ".join(
+                f"{key}={value}"
+                for key, value in event.items()
+                if key
+                in {"indexed_runs", "failed_runs", "exit_code", "error", "pending"}
+            )
+            print(f"watch {event.get('event', 'event')} {details}".rstrip(), flush=True)
+
+    previous = {}
+    stop = Event()
+    try:
+        if args.repo and not args.project:
+            raise ValueError("--repo requires --project")
+        options = WatchOptions(
+            poll_interval=args.interval,
+            debounce=args.debounce,
+            max_debounce=args.max_debounce,
+            retry_interval=args.retry_interval,
+        )
+        root = Path(args.path).expanduser().resolve(strict=True)
+        if not root.is_dir():
+            raise ValueError(f"Watch root is not a directory: {root}")
+        project, repo = _watch_registration(root, args.project, args.repo)
+
+        def request_stop(signum, frame) -> None:
+            stop.set()
+
+        for signum in (signal_module.SIGINT, signal_module.SIGTERM):
+            previous[signum] = signal_module.getsignal(signum)
+            signal_module.signal(signum, request_stop)
+        result = watch_project(
+            root,
+            project_slug=project["slug"],
+            repo_slug=repo["slug"],
+            options=options,
+            index_options=IndexOptions(),
+            once=args.once,
+            on_event=emit,
+            stop_event=stop,
+        )
+        emit(
+            {
+                "event": "stopped",
+                "indexed_runs": result.indexed_runs,
+                "failed_runs": result.failed_runs,
+                "exit_code": result.exit_code,
+                "pending": result.pending,
+                "error": result.last_error,
+            }
+        )
+        return result.exit_code
+    except (
+        ProjectResolutionError,
+        ValueError,
+        OSError,
+        RepositoryBusyError,
+        subprocess.SubprocessError,
+    ) as exc:
+        if args.json:
+            emit({"event": "error", "error": str(exc)})
+        else:
+            print(f"gpc watch: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        for signum, handler in previous.items():
+            signal_module.signal(signum, handler)
+
+
 def add_index_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("path", nargs="?", default=".", help="Project root path.")
     parser.add_argument("--slug", help="Project slug. Defaults to directory name.")
@@ -849,15 +1035,23 @@ def cmd_search(args: argparse.Namespace) -> int:
         project=args.project,
         cwd=args.cwd,
         limit=args.limit,
+        repo=args.repo,
+        mode=args.mode,
+        task=args.task,
     )
-    print(f"project={project['slug']} results={len(results)}")
+    print(
+        f"project={project['slug']} results={len(results)} mode={args.mode} task={args.task}"
+    )
     for index, result in enumerate(results, start=1):
         content = result.content.strip().replace("\n\n\n", "\n\n")
         if len(content) > args.content_chars:
             content = f"{content[:args.content_chars].rstrip()}..."
         print(
             f"\n[{index}] score={result.score:.4f} "
-            f"path={result.relative_path} chunk={result.chunk_id}"
+            f"repo={getattr(result, 'repo_slug', None)} "
+            f"path={result.relative_path} chunk={result.chunk_id} "
+            f"sources={','.join(getattr(result, 'retrieval_sources', ())) or '-'} "
+            f"signals={','.join(getattr(result, 'ranking_signals', ())) or '-'}"
         )
         print(content)
     return 0
@@ -874,6 +1068,8 @@ def cmd_context_pack(args: argparse.Namespace) -> int:
         max_chunks=args.max_chunks,
         max_chars=args.max_chars,
         include_graph=args.include_graph,
+        mode=args.mode,
+        task=args.task,
     )
     path = write_context_pack(pack, args.output)
     print(
@@ -911,9 +1107,40 @@ def cmd_token_savings(args: argparse.Namespace) -> int:
 
 
 def cmd_eval_search(args: argparse.Namespace) -> int:
-    from gpc.search_eval import run_search_eval
+    from gpc.search_eval import compare_search_eval, run_search_eval
 
-    report = run_search_eval(args.project, args.fixture, k=args.k)
+    if args.compare:
+        if args.mode != "semantic":
+            raise ValueError("--compare cannot be combined with --mode")
+        comparison = compare_search_eval(
+            args.project, args.fixture, k=args.k, task=args.task
+        )
+        if args.json:
+            print(json.dumps(comparison, indent=2))
+        else:
+            print(f"project={args.project} task={args.task} delta=hybrid-semantic")
+            for name in ("baseline", "candidate"):
+                row = comparison[name]
+                metrics = " ".join(
+                    (
+                        f"{key}={value:.3f}"
+                        if isinstance(value, float)
+                        else f"{key}={value}"
+                    )
+                    for key, value in row["summary"].items()
+                )
+                print(f"{name} mode={row['mode']} {metrics}")
+            print(
+                "delta "
+                + " ".join(
+                    f"{key}={value:+.3f}" for key, value in comparison["delta"].items()
+                )
+            )
+        return 0
+
+    report = run_search_eval(
+        args.project, args.fixture, k=args.k, mode=args.mode, task=args.task
+    )
     if args.json:
         print(json.dumps(report.to_dict(), indent=2))
     else:
@@ -921,7 +1148,21 @@ def cmd_eval_search(args: argparse.Namespace) -> int:
         print(
             f"project={args.project} queries={summary['queries']} "
             f"hits={summary['hits']}/{summary['expected_paths']} "
-            f"recall_at_{args.k}={summary['recall_at_k']:.3f}"
+            f"recall_at_{args.k}={summary['recall_at_k']:.3f} "
+            f"mode={args.mode} task={args.task}"
+        )
+        print(
+            " ".join(
+                f"{key}={summary[key]:.3f}"
+                for key in (
+                    "query_hit_rate",
+                    "mrr_at_k",
+                    "ndcg_at_k",
+                    "mean_latency_ms",
+                    "p95_latency_ms",
+                )
+                if key in summary
+            )
         )
         for result in report.results:
             status = "hit" if result.hit_paths else "miss"
@@ -1554,7 +1795,10 @@ def cmd_audit_cross_project(args: argparse.Namespace) -> int:
 
 
 def cmd_graph_test_portfolio(args: argparse.Namespace) -> int:
-    from gpc.graph_test_portfolio import DEFAULT_TEST_ROOTS, generate_test_portfolio_report
+    from gpc.graph_test_portfolio import (
+        DEFAULT_TEST_ROOTS,
+        generate_test_portfolio_report,
+    )
 
     report = generate_test_portfolio_report(
         args.project,

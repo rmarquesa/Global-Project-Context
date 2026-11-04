@@ -1,19 +1,32 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+import json
+import math
 from pathlib import Path
 import time
 from typing import Any, Iterable
 
 from gpc.config import EMBEDDING_PROVIDER
 from gpc.embeddings import active_embedding_model, embedding_dimension
-from gpc.search import search_project_context
+from gpc.search import SEARCH_MODES, SEARCH_TASKS, search_project_context
+
+
+def _validate_options(k: int, mode: str, task: str) -> None:
+    if not isinstance(k, int) or isinstance(k, bool) or k <= 0:
+        raise ValueError("k must be a positive integer")
+    if not isinstance(mode, str) or mode not in SEARCH_MODES:
+        raise ValueError(f"invalid search evaluation mode: {mode!r}")
+    if not isinstance(task, str) or task not in SEARCH_TASKS:
+        raise ValueError(f"invalid search evaluation task: {task!r}")
 
 
 @dataclass(frozen=True)
 class SearchEvalCase:
     query: str
     expected_paths: list[str]
+    repo: str | list[str] | None = None
+    task: str | None = None
 
 
 @dataclass(frozen=True)
@@ -24,6 +37,8 @@ class SearchEvalResult:
     hit_paths: list[str]
     missing_expected_paths: list[str]
     latency_ms: float = 0.0
+    repo: str | list[str] | None = None
+    task: str = "general"
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -36,130 +51,404 @@ class SearchEvalReport:
     model: str
     dimensions: int
     results: list[SearchEvalResult]
+    mode: str = "semantic"
+    task: str = "general"
 
     @property
     def summary(self) -> dict[str, Any]:
-        expected = sum(len(result.expected_paths) for result in self.results)
-        hits = sum(len(result.hit_paths) for result in self.results)
+        expected = sum(len(r.expected_paths) for r in self.results)
+        hits = sum(len(r.hit_paths) for r in self.results)
+        reciprocal = []
+        ndcgs = []
+        for result in self.results:
+            ranks = set(
+                _label_ranks(
+                    result.expected_paths, result.result_paths[: self.k]
+                ).values()
+            )
+            reciprocal.append(1 / min(ranks) if ranks else 0.0)
+            dcg = sum(1 / math.log2(rank + 1) for rank in ranks)
+            ideal = sum(
+                1 / math.log2(i + 1)
+                for i in range(1, min(len(result.expected_paths), self.k) + 1)
+            )
+            ndcgs.append(dcg / ideal if ideal else 0.0)
+        latencies = sorted(r.latency_ms for r in self.results)
+        p95 = latencies[math.ceil(0.95 * len(latencies)) - 1] if latencies else 0.0
         return {
             "queries": len(self.results),
             "expected_paths": expected,
             "hits": hits,
             "recall_at_k": hits / expected if expected else 0.0,
             "query_hit_rate": (
-                sum(1 for result in self.results if result.hit_paths)
-                / len(self.results)
+                sum(bool(r.hit_paths) for r in self.results) / len(self.results)
                 if self.results
                 else 0.0
             ),
+            "mrr_at_k": sum(reciprocal) / len(reciprocal) if reciprocal else 0.0,
+            "ndcg_at_k": sum(ndcgs) / len(ndcgs) if ndcgs else 0.0,
+            "mean_latency_ms": sum(latencies) / len(latencies) if latencies else 0.0,
+            "p95_latency_ms": p95,
         }
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "k": self.k,
+            "mode": self.mode,
+            "task": self.task,
+            "latency_note": "Milliseconds are supplied or wall-clock measurements (zero if absent), not performance claims; p95 uses nearest rank.",
             "embedding": {
                 "provider": self.provider,
                 "model": self.model,
                 "dimensions": self.dimensions,
             },
             "summary": self.summary,
-            "results": [result.to_dict() for result in self.results],
+            "results": [r.to_dict() for r in self.results],
         }
+
+
+def _identity(path: str, repo: str | None = None) -> str:
+    if ":" in path:
+        return path
+    return f"{repo}:{path}" if repo else path
+
+
+def _label_ranks(labels: list[str], paths: list[str]) -> dict[str, int]:
+    """Match legacy paths across repos and qualified labels exactly.
+
+    Each label uses its first matching rank. Overlapping labels may share a
+    rank, but that rank contributes only one binary gain to nDCG. Repeated
+    chunks never contribute additional gain, nor compress ranked positions.
+    """
+    identities: dict[str, int] = {}
+    relative: dict[str, int] = {}
+    for rank, identity in enumerate(paths, 1):
+        identities.setdefault(identity, rank)
+        relative.setdefault(identity.split(":", 1)[-1], rank)
+    return {
+        label: rank
+        for label in labels
+        if (rank := (identities if ":" in label else relative).get(label)) is not None
+    }
+
+
+def _validate_case(case: SearchEvalCase) -> None:
+    if not isinstance(case.query, str) or not case.query.strip():
+        raise ValueError("fixture query must be a nonempty string")
+    if not isinstance(case.expected_paths, list) or any(
+        not isinstance(p, str) or not p.strip() for p in case.expected_paths
+    ):
+        raise ValueError("expected_paths must be a list of nonempty strings")
+    if case.repo is not None and not (
+        isinstance(case.repo, str)
+        and bool(case.repo.strip())
+        or isinstance(case.repo, list)
+        and all(isinstance(r, str) and r.strip() for r in case.repo)
+    ):
+        raise ValueError("repo must be a string or list of strings")
+    if case.task is not None and (
+        not isinstance(case.task, str) or case.task not in SEARCH_TASKS
+    ):
+        raise ValueError(f"invalid search evaluation task: {case.task!r}")
 
 
 def compute_search_eval(
     cases: Iterable[SearchEvalCase],
     *,
-    results_by_query: dict[str, list[str]],
+    results_by_query: dict[Any, list[str]],
     k: int,
     provider: str | None = None,
     model: str | None = None,
     dimensions: int | None = None,
-    latency_by_query: dict[str, float] | None = None,
+    latency_by_query: dict[Any, float] | None = None,
+    mode: str = "semantic",
+    task: str = "general",
 ) -> SearchEvalReport:
-    results: list[SearchEvalResult] = []
-    for case in cases:
-        result_paths = list(results_by_query.get(case.query, []))[:k]
-        hits = [path for path in case.expected_paths if path in result_paths]
-        missing = [path for path in case.expected_paths if path not in result_paths]
+    """Score supplied rankings without retrieval (metadata may probe embeddings).
+
+    String keys preserve the legacy query API. Scoped keys may be
+    (query, str(repo), effective_task[, case_index]) to distinguish cases.
+    Supply provider/model/dimensions for a wholly deterministic computation.
+    Unlabelled cases contribute zero to macro MRR/nDCG and query hit rate.
+    """
+    _validate_options(k, mode, task)
+    case_list = list(cases)
+    for case in case_list:
+        _validate_case(case)
+    results = []
+    for n, case in enumerate(case_list):
+        key = (case.query, str(case.repo), case.task or task, n)
+        paths = results_by_query.get(
+            key,
+            results_by_query.get(
+                (case.query, str(case.repo), case.task or task),
+                results_by_query.get(case.query, []),
+            ),
+        )
+        ranked = list(paths)[:k]
+        expected = list(dict.fromkeys(case.expected_paths))
+        normalized = [
+            (
+                p
+                if isinstance(p, str)
+                else _identity(p.relative_path, getattr(p, "repo_slug", None))
+            )
+            for p in ranked
+        ]
+        ranks = _label_ranks(expected, normalized)
+        hit = [p for p in expected if p in ranks]
         results.append(
             SearchEvalResult(
-                query=case.query,
-                expected_paths=list(case.expected_paths),
-                result_paths=result_paths,
-                hit_paths=hits,
-                missing_expected_paths=missing,
-                latency_ms=(latency_by_query or {}).get(case.query, 0.0),
+                case.query,
+                expected,
+                normalized,
+                hit,
+                [p for p in expected if p not in ranks],
+                (latency_by_query or {}).get(
+                    key, (latency_by_query or {}).get(case.query, 0.0)
+                ),
+                case.repo,
+                case.task or task,
             )
         )
+    lexical = mode == "lexical"
     return SearchEvalReport(
-        k=k,
-        provider=provider or EMBEDDING_PROVIDER,
-        model=model or active_embedding_model(),
-        dimensions=dimensions or embedding_dimension(),
-        results=results,
+        k,
+        (
+            provider
+            if provider is not None
+            else ("not_applicable" if lexical else EMBEDDING_PROVIDER)
+        ),
+        (
+            model
+            if model is not None
+            else ("not_applicable" if lexical else active_embedding_model())
+        ),
+        (
+            dimensions
+            if dimensions is not None
+            else (0 if lexical else embedding_dimension())
+        ),
+        results,
+        mode,
+        task,
     )
 
 
 def run_search_eval(
-    project: str, fixture_path: str | Path, *, k: int = 5
+    project: str,
+    fixture_path: str | Path,
+    *,
+    k: int = 5,
+    mode: str = "semantic",
+    task: str = "general",
 ) -> SearchEvalReport:
+    """Measure fixture retrieval; case repo/task override the run defaults."""
+    _validate_options(k, mode, task)
     cases = load_search_eval_fixture(fixture_path)
-    results_by_query: dict[str, list[str]] = {}
-    latency_by_query: dict[str, float] = {}
+    return _run_cases(project, cases, k=k, mode=mode, task=task)
+
+
+def _run_cases(
+    project: str, cases: list[SearchEvalCase], *, k: int, mode: str, task: str
+) -> SearchEvalReport:
     for case in cases:
+        _validate_case(case)
+    rows, latency = {}, {}
+    for i, case in enumerate(cases):
+        effective_task = case.task or task
         started = time.perf_counter()
-        _, results = search_project_context(case.query, project=project, limit=k)
-        latency_by_query[case.query] = round((time.perf_counter() - started) * 1000, 2)
-        results_by_query[case.query] = [result.relative_path for result in results]
-    return compute_search_eval(
+        _, found = search_project_context(
+            case.query,
+            project=project,
+            limit=k,
+            mode=mode,
+            task=effective_task,
+            repo=case.repo,
+        )
+        key = (case.query, str(case.repo), effective_task, i)
+        latency[key] = round((time.perf_counter() - started) * 1000, 2)
+        rows[key] = [
+            (
+                f"{r.repo_slug}:{r.relative_path}"
+                if getattr(r, "repo_slug", None)
+                else r.relative_path
+            )
+            for r in found
+        ]
+    report = compute_search_eval(
         cases,
-        results_by_query=results_by_query,
+        results_by_query=rows,
         k=k,
-        latency_by_query=latency_by_query,
+        mode=mode,
+        task=task,
+        latency_by_query=latency,
     )
+    return report
+
+
+def compare_search_eval(
+    project: str, fixture_path: str | Path, *, k: int = 5, task: str = "general"
+) -> dict[str, Any]:
+    """Run the same fixture in semantic/hybrid order; deltas are candidate-baseline.
+
+    These fixture-specific measurements are not evidence of production gains.
+    """
+    _validate_options(k, "semantic", task)
+    cases = load_search_eval_fixture(fixture_path)
+    baseline = _run_cases(project, cases, k=k, mode="semantic", task=task).to_dict()
+    candidate = _run_cases(project, cases, k=k, mode="hybrid", task=task).to_dict()
+    metrics = (
+        "recall_at_k",
+        "query_hit_rate",
+        "mrr_at_k",
+        "ndcg_at_k",
+        "mean_latency_ms",
+        "p95_latency_ms",
+    )
+    return {
+        "baseline": baseline,
+        "candidate": candidate,
+        "delta": {m: candidate["summary"][m] - baseline["summary"][m] for m in metrics},
+    }
 
 
 def load_search_eval_fixture(path: str | Path) -> list[SearchEvalCase]:
     text = Path(path).read_text(encoding="utf-8")
     try:
         import yaml  # type: ignore
-    except Exception:
+    except ImportError:
         return _parse_simple_fixture(text)
-    payload = yaml.safe_load(text)
-    return [
-        SearchEvalCase(
-            query=item["query"], expected_paths=list(item.get("expected_paths") or [])
+    try:
+        payload = yaml.safe_load(text)
+    except yaml.YAMLError as exc:
+        raise ValueError("invalid search evaluation fixture YAML") from exc
+    return _cases_from_payload(payload)
+
+
+def _cases_from_payload(payload: Any) -> list[SearchEvalCase]:
+    if payload is None:
+        return []
+    if not isinstance(payload, dict) or set(payload) != {"queries"}:
+        raise ValueError("fixture must contain only a queries list")
+    items = payload["queries"]
+    if items is None:
+        return []
+    if not isinstance(items, list):
+        raise ValueError("fixture queries must be a list")
+    cases = []
+    for item in items:
+        if (
+            not isinstance(item, dict)
+            or "query" not in item
+            or set(item) - {"query", "expected_paths", "repo", "task"}
+        ):
+            raise ValueError("fixture case requires query and supported fields only")
+        paths = item.get("expected_paths")
+        case = SearchEvalCase(
+            item["query"],
+            [] if paths is None else paths,
+            item.get("repo"),
+            item.get("task"),
         )
-        for item in payload.get("queries") or []
-    ]
-
-
-def _parse_simple_fixture(text: str) -> list[SearchEvalCase]:
-    cases: list[SearchEvalCase] = []
-    current_query: str | None = None
-    current_paths: list[str] = []
-    in_expected = False
-    for raw_line in text.splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#"):
-            continue
-        if line.startswith("- query:"):
-            if current_query is not None:
-                cases.append(SearchEvalCase(current_query, current_paths))
-            current_query = _unquote(line.split(":", 1)[1].strip())
-            current_paths = []
-            in_expected = False
-        elif line.startswith("expected_paths:"):
-            in_expected = True
-        elif in_expected and line.startswith("-"):
-            current_paths.append(_unquote(line[1:].strip()))
-    if current_query is not None:
-        cases.append(SearchEvalCase(current_query, current_paths))
+        _validate_case(case)
+        cases.append(case)
     return cases
 
 
-def _unquote(value: str) -> str:
-    if len(value) >= 2 and value[0] in {'"', "'"} and value[-1] == value[0]:
-        return value[1:-1]
+def _parse_simple_fixture(text: str) -> list[SearchEvalCase]:
+    """Parse the documented fixture subset without an optional YAML dependency.
+
+    Supports block cases, scalar strings, and inline/block lists. Other YAML
+    features are rejected rather than silently changing evaluation labels.
+    """
+    items: list[dict[str, Any]] = []
+    current: dict[str, Any] | None = None
+    list_field: str | None = None
+    root_seen = False
+    inline_empty_root = False
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        indent = len(raw) - len(raw.lstrip(" "))
+        if "\t" in raw:
+            raise ValueError("fixture indentation must use spaces")
+        if not root_seen:
+            if indent != 0 or line not in {"queries:", "queries: []"}:
+                raise ValueError("fixture must start with queries:")
+            root_seen = True
+            inline_empty_root = line == "queries: []"
+            continue
+        if inline_empty_root:
+            raise ValueError("unexpected content after queries: []")
+        if line.startswith("- query:"):
+            if indent != 2:
+                raise ValueError("fixture cases must be indented two spaces")
+            current = {"query": _fixture_scalar(line.split(":", 1)[1].strip())}
+            items.append(current)
+            list_field = None
+        elif current is not None and indent == 4 and ":" in line:
+            field, value = line.split(":", 1)
+            if field not in {"repo", "task", "expected_paths"} or field in current:
+                raise ValueError(f"unsupported or repeated fixture field: {field}")
+            value = value.strip()
+            list_field = (
+                field if not value and field in {"repo", "expected_paths"} else None
+            )
+            current[field] = [] if list_field else _fixture_value(value)
+        elif (
+            current is not None and indent == 6 and line.startswith("- ") and list_field
+        ):
+            current[list_field].append(_fixture_scalar(line[2:].strip()))
+        else:
+            raise ValueError(f"unsupported fixture syntax: {line}")
+    return _cases_from_payload({"queries": items})
+
+
+def _fixture_value(value: str) -> Any:
+    if not value.startswith("["):
+        return _fixture_scalar(value)
+    if not value.endswith("]"):
+        raise ValueError("unterminated fixture list")
+    parts, start, quote = [], 1, None
+    for i in range(1, len(value) - 1):
+        char = value[i]
+        if char in {"'", '"'}:
+            if quote is None:
+                quote = char
+            elif quote == char and (quote == "'" or value[i - 1] != "\\"):
+                quote = None
+        elif char == "," and quote is None:
+            parts.append(_fixture_scalar(value[start:i].strip()))
+            start = i + 1
+    if quote:
+        raise ValueError("unterminated fixture string")
+    tail = value[start:-1].strip()
+    if tail:
+        parts.append(_fixture_scalar(tail))
+    return parts
+
+
+def _fixture_scalar(value: str) -> Any:
+    if value in {"", "null", "~"}:
+        return None
+    if value.startswith('"'):
+        try:
+            return json.loads(value)
+        except ValueError as exc:
+            raise ValueError("unsupported quoted fixture string") from exc
+    if value.startswith("'"):
+        if len(value) < 2 or not value.endswith("'"):
+            raise ValueError("unterminated fixture string")
+        if "'" in value[1:-1].replace("''", ""):
+            raise ValueError("single quotes in fixture strings must be doubled")
+        return value[1:-1].replace("''", "'")
+    if (
+        any(c in value for c in '[]{}#&*!|>"')
+        or ": " in value
+        or value.lower() in {"true", "false", "yes", "no", "on", "off"}
+        or value.replace(".", "", 1).lstrip("+-").isdigit()
+    ):
+        raise ValueError("unsupported fixture scalar; quote string values")
     return value

@@ -9,7 +9,8 @@ installation, transport options and troubleshooting.
 
 ## MCP Tools
 
-The server exposes seventeen read-only tools.
+Retrieval tools do not modify source indexes or decision memory. MCP call
+logging and optional metrics/drift collection can persist operational records.
 
 | Tool | Purpose | Key inputs |
 |---|---|---|
@@ -19,8 +20,9 @@ The server exposes seventeen read-only tools.
 | `gpc_list_projects` | Lists registered projects with their repos and aliases. | — |
 | `gpc_list_repos` | Lists repositories under a project. | `project`, `cwd` |
 | `gpc_index_status` | Returns indexed file count, chunk count, Qdrant point count and recent run summaries. | `cwd`, `project`, `runs` |
-| `gpc_search` | Returns ranked chunk hits for a semantic query, hydrated from Postgres. Pass `repo` to filter. | `query`, `cwd`/`project`, `limit`, `content_chars`, `repo` |
-| `gpc_context` | Returns one bounded context block ready to inject into a prompt. Pass `repo` to filter; set `include_graph=true` for hybrid retrieval (each chunk gets a footer with neighbours + confidence from Neo4j). | `query`, `cwd`/`project`, `max_chunks`, `max_chars`, `repo`, `include_graph`, `graph_min_confidence` |
+| `gpc_search` | Returns semantic, lexical or hybrid ranked chunks, hydrated from Postgres with retrieval provenance. | `query`, `cwd`/`project`, `limit`, `content_chars`, `repo`, `mode`, `task` |
+| `gpc_context` | Returns a bounded context block. `include_graph=true` adds structural annotations after retrieval; it is separate from lexical/vector hybrid mode. | `query`, `cwd`/`project`, `max_chunks`, `max_chars`, `repo`, `mode`, `task`, `include_graph`, `graph_min_confidence` |
+| `gpc_decisions` | Reads approved decision memory with current indexed evidence; inactive diagnostics are opt-in. No capture or approval writes. | `query`, `cwd`/`project`, `repo`, `path`, `limit`, `content_chars`, `include_inactive` |
 | `gpc_estimate_token_savings` | Reports `indexed_tokens`, `retrieved_tokens` and the estimated saving for a query. | `query`, `cwd`/`project` |
 | `gpc_graph_neighbors` | Neighbours of a node in the Neo4j projection, with typed relations and confidence. Answers "who uses X?". | `node`, `cwd`/`project`, `depth`, `min_confidence`, `relations`, `limit` |
 | `gpc_graph_summary` | God nodes, repo breakdown, cross-repo bridges and communities. The structured equivalent of `GRAPH_REPORT.md`. | `cwd`/`project`, `top_k_gods`, `include_cohesion` |
@@ -40,22 +42,30 @@ finally to its own working directory.
 **Repo scoping**. A single project can own multiple repositories (e.g.
 `alugafacil` owns `workers-gateway`, `workers-users`, `web`). Pass a single
 slug (`repo: "workers-gateway"`) or a list (`repo: ["workers-gateway", "workers-users"]`)
-to `gpc_search` and `gpc_context` to keep retrieval scoped. When the client
-is already inside a repo directory, `cwd` resolution picks the correct repo
-automatically — no explicit `repo` needed.
+to `gpc_search` and `gpc_context` to keep retrieval scoped. These tools resolve
+the project from `cwd`, but a project can contain multiple repositories: pass
+`repo` explicitly when you require a repository-specific result. `gpc_decisions`
+accepts one optional repo slug; omission searches within the resolved project.
 
 **Bounded retrieval**. `gpc_context` enforces `max_chunks` and `max_chars` so
 the returned block fits inside an AI prompt. Use `gpc_search` when you want
 the raw matches with relevance scores instead.
 
-**Semantic vs. structural**. `gpc_search` / `gpc_context` answer "what looks
-like this?" — they return text chunks ranked by embedding similarity. The
+**Source vs. structural retrieval**. `gpc_search` / `gpc_context` return text
+chunks with semantic, lexical or fused ranking. Semantic remains the default;
+see [Hybrid retrieval](hybrid-search.md) for task preferences and evaluation. The
 `gpc_graph_*` tools answer "what connects to this?" — they read the Neo4j
 projection and return nodes and typed edges (calls, imports, cross-repo
 bridges). Use them together: `graph_summary` to orient on the project,
 `graph_neighbors` to discover callers and dependencies, `graph_path` to trace
 a chain between two symbols, then `search` / `context` to get the actual code
 behind any interesting node.
+
+**Decision memory**. `gpc_decisions` is a separate, read-only memory surface.
+Approval and evidence freshness are explicit, and freshness is relative to the
+index rather than unindexed disk edits. Diagnostic inactive results are not
+endorsed instructions. See [Decision memory](decision-memory.md) for capture,
+approval, invalidation, supersession and migration prerequisites.
 
 `gpc_graph_neighbors.relations` is an exact list of Neo4j relationship types
 (not a pattern or regex). It defaults to `GRAPHIFY_RELATION` and

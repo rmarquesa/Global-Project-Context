@@ -16,11 +16,19 @@ import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 from qdrant_client import QdrantClient
-from qdrant_client.models import Filter, FieldCondition, MatchValue, PointStruct
+from qdrant_client.models import (
+    Filter,
+    FieldCondition,
+    IsEmptyCondition,
+    MatchValue,
+    PayloadField,
+    PointStruct,
+)
 
 from gpc.db import get_qdrant, pg_connection
 from gpc.config import COLLECTION_NAME
 from gpc.embeddings import embed_texts
+from gpc.index_lock import repository_lock
 from gpc.registry import (
     link_project_source,
     register_project,
@@ -301,6 +309,26 @@ def index_project_path(
     options: IndexOptions | None = None,
     repo_slug: str | None = None,
 ) -> IndexStats:
+    with repository_lock(root_path):
+        return _index_project_path(
+            root_path,
+            slug=slug,
+            name=name,
+            description=description,
+            options=options,
+            repo_slug=repo_slug,
+        )
+
+
+def _index_project_path(
+    root_path: str | Path,
+    *,
+    slug: str | None = None,
+    name: str | None = None,
+    description: str | None = None,
+    options: IndexOptions | None = None,
+    repo_slug: str | None = None,
+) -> IndexStats:
     opts = options or IndexOptions()
     root = Path(root_path).expanduser().resolve(strict=True)
     if not root.is_dir():
@@ -443,6 +471,7 @@ def index_project_path(
 
 
 def discover_project_files(root: Path, options: IndexOptions) -> DiscoveryResult:
+    root = root.resolve(strict=True)
     if _is_git_worktree(root):
         paths = _git_discover_paths(root)
         if paths:
@@ -459,7 +488,7 @@ def _index_file(
 ) -> FileIndexResult:
     raw = candidate.absolute_path.read_bytes()
     if b"\x00" in raw:
-        removed = _remove_file_index(project["id"], candidate.relative_path, qdrant)
+        removed = _remove_file_index(project, candidate.relative_path, qdrant)
         return FileIndexResult(
             status="skipped",
             reason="binary_content",
@@ -469,7 +498,7 @@ def _index_file(
 
     text = raw.decode("utf-8", errors="replace")
     if _looks_sensitive_content(text):
-        removed = _remove_file_index(project["id"], candidate.relative_path, qdrant)
+        removed = _remove_file_index(project, candidate.relative_path, qdrant)
         return FileIndexResult(
             status="skipped",
             reason="sensitive_content",
@@ -484,8 +513,9 @@ def _index_file(
             select id, content_hash, indexed_at
             from gpc_files
             where project_id = %s and relative_path = %s
+              and repo_id is not distinct from %s
             """,
-            (project["id"], candidate.relative_path),
+            (project["id"], candidate.relative_path, project.get("_repo_id")),
         ).fetchone()
         if (
             not options.force
@@ -493,7 +523,17 @@ def _index_file(
             and existing["content_hash"] == file_hash
             and existing["indexed_at"] is not None
         ):
-            return FileIndexResult(status="unchanged")
+            rows = conn.execute(
+                "select qdrant_point_id from gpc_chunks where file_id = %s",
+                (existing["id"],),
+            ).fetchall()
+            expected_ids = {row["qdrant_point_id"] for row in rows}
+            # Postgres completion alone cannot detect a recreated collection or
+            # lost points. Also check for leftovers from an interrupted update.
+            if expected_ids and expected_ids == _file_point_ids(
+                project, existing["id"], qdrant
+            ):
+                return FileIndexResult(status="unchanged")
 
     chunks = chunk_text(
         text,
@@ -502,7 +542,7 @@ def _index_file(
         max_chars=options.chunk_chars,
     )
     if not chunks:
-        removed = _remove_file_index(project["id"], candidate.relative_path, qdrant)
+        removed = _remove_file_index(project, candidate.relative_path, qdrant)
         return FileIndexResult(
             status="skipped",
             reason="empty_text",
@@ -569,10 +609,18 @@ def _index_file(
             )
         )
 
-    qdrant.upsert(collection_name=COLLECTION_NAME, points=points)
-    stale_point_ids = sorted(set(old_point_ids) - set(new_point_ids))
+    qdrant.upsert(collection_name=COLLECTION_NAME, points=points, wait=True)
+    # Query the actual file projection, not only the previous SQL chunk IDs:
+    # SQL replacement may already have committed during an earlier failed try.
+    stale_point_ids = sorted(
+        _file_point_ids(project, file_row["id"], qdrant) - set(new_point_ids)
+    )
     if stale_point_ids:
-        qdrant.delete(collection_name=COLLECTION_NAME, points_selector=stale_point_ids)
+        qdrant.delete(
+            collection_name=COLLECTION_NAME,
+            points_selector=stale_point_ids,
+            wait=True,
+        )
 
     with _connect() as conn:
         conn.execute(
@@ -684,6 +732,26 @@ def _build_discovery(
     candidates: list[FileCandidate] = []
 
     for absolute_path in paths:
+        # Git lists a tracked directory symlink, not the files below it. Only
+        # traverse it after the same containment/ignore checks used by os.walk.
+        if (
+            options.follow_symlinks
+            and absolute_path.is_symlink()
+            and absolute_path.is_dir()
+        ):
+            resolved = _resolve_discovery_path(root, absolute_path, options, skipped)
+            if resolved is None:
+                continue
+            if _ignored_discovery_path(root, absolute_path, resolved, is_dir=True):
+                skipped["ignored_dir"] += 1
+                continue
+            linked = _walk_discover_files(root, options, start=absolute_path)
+            candidates.extend(linked.candidates)
+            skipped.update(linked.skipped)
+            if options.limit_files and len(candidates) >= options.limit_files:
+                candidates = candidates[: options.limit_files]
+                break
+            continue
         candidate = _candidate_from_path(root, absolute_path, options, skipped)
         if not candidate:
             continue
@@ -695,13 +763,16 @@ def _build_discovery(
     return DiscoveryResult(candidates=candidates, skipped=skipped, mode=mode)
 
 
-def _walk_discover_files(root: Path, options: IndexOptions) -> DiscoveryResult:
+def _walk_discover_files(
+    root: Path, options: IndexOptions, *, start: Path | None = None
+) -> DiscoveryResult:
+    root = root.resolve(strict=True)
     skipped: Counter[str] = Counter()
     candidates: list[FileCandidate] = []
     gitignore_patterns = _load_gitignore_patterns(root)
 
     for current_root, dirnames, filenames in os.walk(
-        root, followlinks=options.follow_symlinks
+        start or root, followlinks=options.follow_symlinks
     ):
         current_path = Path(current_root)
         rel_dir = current_path.relative_to(root)
@@ -710,6 +781,23 @@ def _walk_discover_files(root: Path, options: IndexOptions) -> DiscoveryResult:
             rel_path = rel_dir / dirname
             if _should_ignore_dir(rel_path, dirname, gitignore_patterns):
                 skipped["ignored_dir"] += 1
+                continue
+            absolute_dir = current_path / dirname
+            resolved = _resolve_discovery_path(root, absolute_dir, options, skipped)
+            if resolved is None:
+                continue
+            if _ignored_discovery_path(root, absolute_dir, resolved, is_dir=True):
+                skipped["ignored_dir"] += 1
+                continue
+            # Reject directory-link cycles without suppressing legitimate aliases
+            # of an in-root directory reached along a different lexical path.
+            ancestors = [current_path, *current_path.parents]
+            if resolved in {
+                ancestor.resolve()
+                for ancestor in ancestors
+                if ancestor.is_relative_to(root)
+            }:
+                skipped["symlink_cycle"] += 1
                 continue
             kept_dirs.append(dirname)
         dirnames[:] = kept_dirs
@@ -735,36 +823,40 @@ def _candidate_from_path(
     options: IndexOptions,
     skipped: Counter[str],
 ) -> FileCandidate | None:
+    root = root.resolve(strict=True)
+    absolute_path = Path(os.path.abspath(absolute_path))
+    resolved = _resolve_discovery_path(root, absolute_path, options, skipped)
+    if resolved is None:
+        return None
     try:
-        if not absolute_path.exists() or not absolute_path.is_file():
+        if not resolved.is_file():
             skipped["not_file"] += 1
             return None
-        if absolute_path.is_symlink() and not options.follow_symlinks:
-            skipped["symlink"] += 1
-            return None
-        stat = absolute_path.stat()
+        stat = resolved.stat()
     except OSError:
         skipped["stat_error"] += 1
         return None
 
     relative_path = absolute_path.relative_to(root).as_posix()
-    filename = absolute_path.name
-    suffix = absolute_path.suffix.lower()
-
-    if filename in IGNORED_FILES:
-        skipped["ignored_file"] += 1
+    if _ignored_discovery_path(root, absolute_path, resolved, is_dir=False):
+        skipped["ignored_path"] += 1
         return None
-    if _looks_sensitive_filename(filename):
-        skipped["sensitive_filename"] += 1
-        return None
-    if suffix in BINARY_EXTENSIONS:
-        skipped["binary_extension"] += 1
-        return None
+    # An innocuous alias must not bypass the target's filename policy.
+    for path in {absolute_path, resolved}:
+        if path.name in IGNORED_FILES:
+            skipped["ignored_file"] += 1
+            return None
+        if _looks_sensitive_filename(path.name):
+            skipped["sensitive_filename"] += 1
+            return None
+        if path.suffix.lower() in BINARY_EXTENSIONS:
+            skipped["binary_extension"] += 1
+            return None
+        if not options.include_unknown_text and not _is_supported_text_path(path):
+            skipped["unsupported_extension"] += 1
+            return None
     if stat.st_size > options.max_file_bytes:
         skipped["too_large"] += 1
-        return None
-    if not options.include_unknown_text and not _is_supported_text_path(absolute_path):
-        skipped["unsupported_extension"] += 1
         return None
 
     return FileCandidate(
@@ -774,6 +866,82 @@ def _candidate_from_path(
         language=_language_for_path(absolute_path),
         file_type=_file_type(absolute_path),
     )
+
+
+def _resolve_discovery_path(
+    root: Path, path: Path, options: IndexOptions, skipped: Counter[str]
+) -> Path | None:
+    """Check lexical identity before allowing any symlink target into discovery."""
+    try:
+        relative = path.relative_to(root)
+        if ".." in relative.parts:
+            raise ValueError("parent traversal")
+        resolved = path.resolve(strict=True)
+        resolved.relative_to(root)
+        if not options.follow_symlinks and any(
+            (root / Path(*relative.parts[:i])).is_symlink()
+            for i in range(1, len(relative.parts) + 1)
+        ):
+            skipped["symlink"] += 1
+            return None
+        return resolved
+    except ValueError:
+        skipped["outside_root"] += 1
+    except (OSError, RuntimeError):
+        skipped["stat_error"] += 1
+    return None
+
+
+def _ignored_discovery_path(
+    root: Path, path: Path, resolved: Path, *, is_dir: bool
+) -> bool:
+    patterns = _load_gitignore_patterns(root)
+    for candidate in {path, resolved}:
+        relative = candidate.relative_to(root)
+        directories = relative.parts if is_dir else relative.parts[:-1]
+        if any(dirname in IGNORED_DIRS for dirname in directories):
+            return True
+
+    ignored_candidates = {path, resolved}
+    if path != resolved:
+        # Git knows nested ignore files and directory rules that the lightweight
+        # non-Git walker does not. --no-index also protects ignored tracked targets.
+        try:
+            result = subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(root),
+                    "check-ignore",
+                    "--no-index",
+                    "-q",
+                    "--",
+                    resolved.relative_to(root).as_posix(),
+                ],
+                check=False,
+                capture_output=True,
+                timeout=5,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return True  # Cannot establish the target's ignore policy safely.
+        if result.returncode == 0:
+            return True
+        if result.returncode == 1:
+            # Git's result includes nested rules and negations. Do not override
+            # an explicitly allowed target with the walker's simpler matcher.
+            ignored_candidates.discard(resolved)
+        elif _is_git_worktree(root):
+            return True
+
+    for candidate in ignored_candidates:
+        relative = candidate.relative_to(root)
+        directories = relative.parts if is_dir else relative.parts[:-1]
+        if any(
+            _should_ignore_dir(Path(*directories[:i]), dirname, patterns)
+            for i, dirname in enumerate(directories, start=1)
+        ) or _matches_gitignore(relative.as_posix(), is_dir=is_dir, patterns=patterns):
+            return True
+    return False
 
 
 def _is_git_worktree(root: Path) -> bool:
@@ -827,7 +995,9 @@ def _git_discover_paths(root: Path) -> list[Path]:
     for raw_path in files_result.stdout.decode("utf-8", errors="replace").split("\0"):
         if not raw_path:
             continue
-        absolute_path = (repo_root / raw_path).resolve(strict=False)
+        # Preserve the lexical path: resolving here erases symlink identity and
+        # lets aliases bypass follow_symlinks=False and target ignore checks.
+        absolute_path = repo_root / raw_path
         try:
             absolute_path.relative_to(root)
         except ValueError:
@@ -967,54 +1137,96 @@ def _clear_project_index(
 ) -> FileIndexResult:
     qdrant.delete(
         collection_name=COLLECTION_NAME,
-        points_selector=Filter(
-            must=[
-                FieldCondition(
-                    key="project_id",
-                    match=MatchValue(value=str(project["id"])),
-                )
-            ]
-        ),
+        points_selector=_projection_filter(project),
+        wait=True,
     )
     with _connect() as conn:
-        conn.execute("delete from gpc_files where project_id = %s", (project["id"],))
+        conn.execute(
+            """
+            delete from gpc_files
+            where project_id = %s and repo_id is not distinct from %s
+            """,
+            (project["id"], project.get("_repo_id")),
+        )
     return FileIndexResult(status="indexed", chunks_deleted=0, points_deleted=0)
 
 
+def _projection_filter(project: dict[str, Any], file_id: Any = None) -> Filter:
+    conditions: list[Any] = [
+        FieldCondition(key="project_id", match=MatchValue(value=str(project["id"])))
+    ]
+    repo_id = project.get("_repo_id")
+    conditions.append(
+        FieldCondition(key="repo_id", match=MatchValue(value=str(repo_id)))
+        if repo_id is not None
+        else IsEmptyCondition(is_empty=PayloadField(key="repo_id"))
+    )
+    if file_id is not None:
+        conditions.append(
+            FieldCondition(key="file_id", match=MatchValue(value=str(file_id)))
+        )
+    return Filter(must=conditions)
+
+
+def _file_point_ids(
+    project: dict[str, Any], file_id: Any, qdrant: QdrantClient
+) -> set[str]:
+    point_ids: set[str] = set()
+    offset = None
+    while True:
+        points, offset = qdrant.scroll(
+            collection_name=COLLECTION_NAME,
+            scroll_filter=_projection_filter(project, file_id),
+            limit=256,
+            offset=offset,
+            with_payload=False,
+            with_vectors=False,
+        )
+        point_ids.update(str(point.id) for point in points)
+        if offset is None:
+            return point_ids
+
+
 def _remove_file_index(
-    project_id: Any,
+    project: dict[str, Any],
     relative_path: str,
     qdrant: QdrantClient,
 ) -> FileIndexResult:
     with _connect() as conn:
         rows = conn.execute(
             """
-            select c.qdrant_point_id
+            select f.id, c.qdrant_point_id
             from gpc_files f
             left join gpc_chunks c on c.file_id = f.id
-            where f.project_id = %s
-              and f.relative_path = %s
-              and c.qdrant_point_id is not null
+            where f.project_id = %s and f.relative_path = %s
+              and f.repo_id is not distinct from %s
             """,
-            (project_id, relative_path),
+            (project["id"], relative_path, project.get("_repo_id")),
         ).fetchall()
-        point_ids = [row["qdrant_point_id"] for row in rows]
+    point_ids = set()
+    for file_id in {row["id"] for row in rows}:
+        point_ids.update(_file_point_ids(project, file_id, qdrant))
 
     if point_ids:
-        qdrant.delete(collection_name=COLLECTION_NAME, points_selector=point_ids)
+        qdrant.delete(
+            collection_name=COLLECTION_NAME,
+            points_selector=sorted(point_ids),
+            wait=True,
+        )
 
     with _connect() as conn:
         conn.execute(
             """
             delete from gpc_files
             where project_id = %s and relative_path = %s
+              and repo_id is not distinct from %s
             """,
-            (project_id, relative_path),
+            (project["id"], relative_path, project.get("_repo_id")),
         )
 
     return FileIndexResult(
         status="indexed",
-        chunks_deleted=len(point_ids),
+        chunks_deleted=sum(row["qdrant_point_id"] is not None for row in rows),
         points_deleted=len(point_ids),
     )
 
@@ -1025,50 +1237,27 @@ def _prune_missing_files(
     qdrant: QdrantClient,
 ) -> FileIndexResult:
     discovered = sorted(discovered_paths)
-    repo_id = project.get("_repo_id")
     with _connect() as conn:
-        if repo_id:
-            # When a repo is in scope, prune only within that repo so parallel
-            # repos of the same project do not wipe each other's index.
-            rows = conn.execute(
-                """
-                select f.id, c.qdrant_point_id
-                from gpc_files f
-                left join gpc_chunks c on c.file_id = f.id
-                where f.project_id = %s
-                  and f.repo_id = %s
-                  and not (f.relative_path = any(%s::text[]))
-                """,
-                (project["id"], repo_id, discovered),
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                """
-                select f.id, c.qdrant_point_id
-                from gpc_files f
-                left join gpc_chunks c on c.file_id = f.id
-                where f.project_id = %s
-                  and not (f.relative_path = any(%s::text[]))
-                """,
-                (project["id"], discovered),
-            ).fetchall()
+        rows = conn.execute(
+            """
+            select relative_path from gpc_files
+            where project_id = %s and repo_id is not distinct from %s
+              and not (relative_path = any(%s::text[]))
+            """,
+            (project["id"], project.get("_repo_id"), discovered),
+        ).fetchall()
 
-    file_ids = sorted({row["id"] for row in rows})
-    point_ids = [row["qdrant_point_id"] for row in rows if row["qdrant_point_id"]]
-
-    if point_ids:
-        qdrant.delete(collection_name=COLLECTION_NAME, points_selector=point_ids)
-
-    if file_ids:
-        with _connect() as conn:
-            conn.execute(
-                "delete from gpc_files where id = any(%s::uuid[])", (file_ids,)
-            )
+    chunks_deleted = 0
+    points_deleted = 0
+    for row in rows:
+        removed = _remove_file_index(project, row["relative_path"], qdrant)
+        chunks_deleted += removed.chunks_deleted
+        points_deleted += removed.points_deleted
 
     return FileIndexResult(
-        status="indexed" if file_ids else "unchanged",
-        chunks_deleted=len(point_ids),
-        points_deleted=len(point_ids),
+        status="indexed" if rows else "unchanged",
+        chunks_deleted=chunks_deleted,
+        points_deleted=points_deleted,
     )
 
 
@@ -1217,8 +1406,8 @@ def _looks_sensitive_filename(filename: str) -> bool:
 
 
 def _looks_sensitive_content(text: str) -> bool:
-    sample = text[:200_000]
-    return any(pattern.search(sample) for pattern in SENSITIVE_CONTENT_PATTERNS)
+    # Discovery bounds accepted files; scan all accepted content, not a prefix.
+    return any(pattern.search(text) for pattern in SENSITIVE_CONTENT_PATTERNS)
 
 
 def _should_ignore_dir(

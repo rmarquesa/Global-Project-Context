@@ -27,7 +27,6 @@ from typing import Any
 from gpc.cross_repo import is_generic_label
 from gpc.graph import neo4j_driver
 
-
 CONFIDENCE_SCORES = {
     "EXTRACTED": 1.0,
     "INFERRED": 0.5,
@@ -67,20 +66,21 @@ def _normalise_edge(edge: dict[str, Any]) -> dict[str, Any]:
     if isinstance(value, (int, float)):
         score = float(value) if score is None else float(score)
         value = (
-            "EXTRACTED" if score >= 1.0
-            else "INFERRED" if score >= CONFIDENCE_SCORES["INFERRED"]
-            else "AMBIGUOUS"
+            "EXTRACTED"
+            if score >= 1.0
+            else "INFERRED" if score >= CONFIDENCE_SCORES["INFERRED"] else "AMBIGUOUS"
         )
     if value is None and score is None:
         value, score = "EXTRACTED", 1.0
     elif isinstance(value, str) and score is None:
         score = CONFIDENCE_SCORES.get(value, 0.0)
     elif value is None:
+        assert score is not None  # The both-missing case was handled above.
         score = float(score)
         value = (
-            "EXTRACTED" if score >= 1.0
-            else "INFERRED" if score >= CONFIDENCE_SCORES["INFERRED"]
-            else "AMBIGUOUS"
+            "EXTRACTED"
+            if score >= 1.0
+            else "INFERRED" if score >= CONFIDENCE_SCORES["INFERRED"] else "AMBIGUOUS"
         )
     return {**edge, "confidence": value, "confidence_score": score}
 
@@ -222,7 +222,9 @@ def graph_neighbors(
     for row in rows:
         # Apply relation-type + confidence filter across every edge in the path.
         edges_raw = [_normalise_edge(e) for e in (row["edges"] or [])]
-        if rel_filter is not None and not all(e["relation"] in rel_filter for e in edges_raw):
+        if rel_filter is not None and not all(
+            e["relation"] in rel_filter for e in edges_raw
+        ):
             continue
         if not all(_edge_passes(e, threshold) for e in edges_raw):
             continue
@@ -243,7 +245,9 @@ def graph_neighbors(
                     direction=direction,
                 )
             )
-            prev_id = edge.get("endNode") if direction == "out" else edge.get("startNode")
+            prev_id = (
+                edge.get("endNode") if direction == "out" else edge.get("startNode")
+            )
         kept.append(
             NeighborNode(
                 id=row["id"],
@@ -352,7 +356,9 @@ def graph_summary(
             gods_central: list[dict[str, Any]] = []
             gods_utility: list[dict[str, Any]] = []
             for row in candidates:
-                target = gods_utility if is_generic_label(row.get("label")) else gods_central
+                target = (
+                    gods_utility if is_generic_label(row.get("label")) else gods_central
+                )
                 if len(target) < top_k_gods:
                     target.append(row)
                 if len(gods_central) >= top_k_gods and len(gods_utility) >= top_k_gods:
@@ -387,8 +393,9 @@ def graph_summary(
 
             cohesion_rows: list[dict[str, Any]] = []
             if include_cohesion:
-                cohesion_rows = session.run(
-                    """
+                cohesion_rows = (
+                    session.run(
+                        """
                     MATCH (n:GraphifyNode {project_slug: $slug})
                     WHERE n.community IS NOT NULL
                     WITH n.community AS community, collect(n) AS members
@@ -401,9 +408,11 @@ def graph_summary(
                     ORDER BY node_count DESC
                     LIMIT 20
                     """,
-                    slug=project_slug,
-                ).data() if _has_apoc(session) else session.run(
-                    """
+                        slug=project_slug,
+                    ).data()
+                    if _has_apoc(session)
+                    else session.run(
+                        """
                     MATCH (n:GraphifyNode {project_slug: $slug})
                     WHERE n.community IS NOT NULL
                     WITH n.community AS community, collect(n) AS members
@@ -415,8 +424,9 @@ def graph_summary(
                     ORDER BY node_count DESC
                     LIMIT 20
                     """,
-                    slug=project_slug,
-                ).data()
+                        slug=project_slug,
+                    ).data()
+                )
 
     return {
         "project_slug": project_slug,
@@ -512,8 +522,12 @@ def graph_diff(
         for field in numeric_fields
     }
 
-    god_from = {g.get("label") for g in (frm.get("god_nodes_top10") or []) if g.get("label")}
-    god_to = {g.get("label") for g in (to.get("god_nodes_top10") or []) if g.get("label")}
+    god_from = {
+        g.get("label") for g in (frm.get("god_nodes_top10") or []) if g.get("label")
+    }
+    god_to = {
+        g.get("label") for g in (to.get("god_nodes_top10") or []) if g.get("label")
+    }
     god_diff = {
         "entered": sorted(god_to - god_from),
         "exited": sorted(god_from - god_to),
@@ -614,7 +628,8 @@ def graph_community(
                 RETURN count(n) AS total,
                        collect(DISTINCT n.repo_slug) AS repos
                 """,
-                slug=project_slug, cid=community_id,
+                slug=project_slug,
+                cid=community_id,
             ).single()
             if not meta or (meta["total"] or 0) == 0:
                 return {
@@ -633,7 +648,9 @@ def graph_community(
                 ORDER BY degree DESC, label ASC
                 LIMIT $limit
                 """,
-                slug=project_slug, cid=community_id, limit=top_members,
+                slug=project_slug,
+                cid=community_id,
+                limit=top_members,
             ).data()
 
             repo_breakdown = session.run(
@@ -642,7 +659,8 @@ def graph_community(
                 RETURN n.repo_slug AS repo, count(*) AS nodes
                 ORDER BY nodes DESC
                 """,
-                slug=project_slug, cid=community_id,
+                slug=project_slug,
+                cid=community_id,
             ).data()
 
             external = session.run(
@@ -663,7 +681,9 @@ def graph_community(
                 ORDER BY coalesce(r.confidence_score, 0.0) DESC
                 LIMIT $limit
                 """,
-                slug=project_slug, cid=community_id, limit=top_external_bridges,
+                slug=project_slug,
+                cid=community_id,
+                limit=top_external_bridges,
             ).data()
 
     return {
@@ -709,7 +729,8 @@ def graph_path(
                                   size(n.label), n.id
                 LIMIT 1
                 """,
-                slug=project_slug, q=a_query,
+                slug=project_slug,
+                q=a_query,
             ).single()
             a_node = dict(resolved["n"]) if resolved else None
 
@@ -721,7 +742,8 @@ def graph_path(
                                   size(n.label), n.id
                 LIMIT 1
                 """,
-                slug=project_slug, q=b_query,
+                slug=project_slug,
+                q=b_query,
             ).single()
             b_node = dict(resolved["n"]) if resolved else None
 
@@ -804,8 +826,16 @@ def _serialise_path(nodes: list[Any], rels: list[dict[str, Any]]) -> dict[str, A
         direction = "out" if rel.get("startNode") == frm.get("id") else "in"
         hops.append(
             {
-                "from": {"id": frm["id"], "label": frm["label"], "repo_slug": frm.get("repo_slug")},
-                "to": {"id": to["id"], "label": to["label"], "repo_slug": to.get("repo_slug")},
+                "from": {
+                    "id": frm["id"],
+                    "label": frm["label"],
+                    "repo_slug": frm.get("repo_slug"),
+                },
+                "to": {
+                    "id": to["id"],
+                    "label": to["label"],
+                    "repo_slug": to.get("repo_slug"),
+                },
                 "relation": rel["relation"],
                 "direction": direction,
                 "confidence": rel.get("confidence"),

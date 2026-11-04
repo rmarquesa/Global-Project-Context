@@ -1,0 +1,15 @@
+# Synthetic examples only: these labels are not a measured live benchmark.
+queries:
+  - query: "exact symbol search_project_context"
+    expected_paths:
+      - "gpc/search.py"
+  - query: "filename search_eval"
+    expected_paths:
+      - "gpc/search_eval.py"
+  - query: "how does hybrid retrieval combine lexical and semantic results"
+    expected_paths:
+      - "docs/search.md"
+  - query: "same filename in two repositories"
+    repo: "repo-a"
+    expected_paths:
+      - "repo-a:src/config.py"

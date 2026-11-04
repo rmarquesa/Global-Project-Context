@@ -37,6 +37,8 @@ GPC_TABLES = (
     "gpc_graph_projections",
     "gpc_index_runs",
     "gpc_events",
+    # DROP decisions CASCADE removes this child's FK, not the table or its data.
+    "gpc_decision_events",
     "gpc_decisions",
     "gpc_relations",
     "gpc_entities",

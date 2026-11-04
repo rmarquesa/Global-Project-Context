@@ -78,3 +78,10 @@ files = [
     "gpc/embeddings.py",
     "gpc/graph_query.py",
 ]
+
+# Qdrant imports NumPy, whose current stubs can use syntax newer than our
+# Python 3.10 target. NumPy is not part of GPC's curated typing boundary.
+[[tool.mypy.overrides]]
+module = ["numpy", "numpy.*"]
+follow_imports = "skip"
+follow_imports_for_stubs = true

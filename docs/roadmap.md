@@ -4,6 +4,15 @@ Roadmap vivo do GPC. Cada fase tem objetivo, entregáveis concretos, arquivos
 afetados e critério de pronto. Atualize à medida que iniciativas concluam ou
 mudem de direção.
 
+O próximo ciclo local-first está detalhado em
+[Context-engine evolution (2026-11-04)](plans/2026-11-04-gpc-context-engine-evolution.md):
+confiabilidade primeiro, depois atualização contínua, recuperação orientada à
+tarefa, memória com evidências e contexto de engenharia. Confiabilidade, watcher
+opcional e recuperação híbrida passaram pela validação local. O incremento atual
+implementa memória de decisões com aprovação explícita; conectores externos e
+reranking aprendido continuam planejados. Cada entrega deve atualizar também o
+site do produto, sem confundir implementação local com publicação ou benchmark.
+
 ## Princípios norteadores
 
 - **MCP read-only no hot path.** Escritas e cargas pesadas ficam em CLI/hooks.
@@ -602,15 +611,18 @@ licenciamento.
 
 ### 4.5 Paridade competitiva com Augment (P1)
 
-- [ ] Indexação incremental via file watcher, além dos hooks de Git
-      (`post-commit`/`post-merge`/`post-checkout` hoje existentes), para
-      refletir edições ainda não commitadas.
-- [ ] Reranking e busca híbrida (léxica + semântica) sobre a busca vetorial
-      pura atual em Qdrant; expandir `gpc eval-search` para medir recall@k
-      continuamente contra essas mudanças.
-- [ ] Memória de decisões/ADRs e feedback de code review, equivalente ao
-      "Code Review Memory" do Augment, mantendo a mesma disciplina de
-      confidence tags já usada no grafo.
+- [x] Watcher opcional em primeiro plano, com polling, debounce, retry e
+      isolamento por worktree, além dos hooks de Git. Latência com serviços
+      reais continua pendente de medição; ver [watcher](watcher.md).
+- [x] Busca híbrida (léxica + semântica), preferências explícitas por tarefa e
+      comparação em `gpc eval-search` com recall, MRR, nDCG e latência. Ganhos de
+      relevância em produção não foram estabelecidos; ver [busca híbrida](hybrid-search.md).
+- [ ] Reranking aprendido e recuperação de símbolos via AST.
+- [x] Memória de decisões com captura, aprovação, invalidação, supersessão e
+      evidência de fonte indexada. CLI/MCP validados localmente; validação com
+      PostgreSQL descartável ainda pendente. Ver [memória de decisões](decision-memory.md).
+- [ ] Conectores de ADRs/PRs/issues e feedback de code review. A inspiração no
+      Augment não estabelece equivalência funcional ou de qualidade.
 - [ ] Dashboard web orientado a produto (além do Grafana técnico atual em
       [observability/](../observability)), legível por gestores não
       técnicos: economia de tokens, uso por cliente de IA, saúde do índice.

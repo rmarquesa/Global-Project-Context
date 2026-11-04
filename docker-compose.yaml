@@ -10,7 +10,7 @@ services:
       POSTGRES_PASSWORD: ${GPC_POSTGRES_PASSWORD:-gpcpass}
       POSTGRES_DB: ${GPC_POSTGRES_DB:-gpc}
     ports:
-      - "${GPC_POSTGRES_PORT:-5433}:5432"
+      - "127.0.0.1:${GPC_POSTGRES_PORT:-5433}:5432"
     volumes:
       - gpc_postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -28,8 +28,8 @@ services:
     container_name: gpc_qdrant
     restart: unless-stopped
     ports:
-      - "${GPC_QDRANT_HTTP_PORT:-6333}:6333"
-      - "${GPC_QDRANT_GRPC_PORT:-6334}:6334"
+      - "127.0.0.1:${GPC_QDRANT_HTTP_PORT:-6333}:6333"
+      - "127.0.0.1:${GPC_QDRANT_GRPC_PORT:-6334}:6334"
     volumes:
       - gpc_qdrant_data:/qdrant/storage
 
@@ -41,8 +41,8 @@ services:
       NEO4J_AUTH: neo4j/${GPC_NEO4J_PASSWORD:-gpcneo4jpass}
       GPC_NEO4J_PASSWORD: ${GPC_NEO4J_PASSWORD:-gpcneo4jpass}
     ports:
-      - "${GPC_NEO4J_BROWSER_PORT:-7474}:7474"
-      - "${GPC_NEO4J_BOLT_PORT:-7687}:7687"
+      - "127.0.0.1:${GPC_NEO4J_BROWSER_PORT:-7474}:7474"
+      - "127.0.0.1:${GPC_NEO4J_BOLT_PORT:-7687}:7687"
     volumes:
       - gpc_neo4j_data:/data
       - gpc_neo4j_logs:/logs
@@ -77,7 +77,7 @@ services:
       GPC_MCP_HTTP_PORT: 8765
       GPC_MCP_HTTP_PATH: /mcp
     ports:
-      - "${GPC_MCP_HTTP_PORT:-8765}:8765"
+      - "127.0.0.1:${GPC_MCP_HTTP_PORT:-8765}:8765"
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
@@ -99,7 +99,7 @@ services:
       GPC_POSTGRES_PASSWORD: ${GPC_POSTGRES_PASSWORD:-gpcpass}
       GPC_POSTGRES_DB: ${GPC_POSTGRES_DB:-gpc}
     ports:
-      - "${GPC_GRAFANA_PORT:-3000}:3000"
+      - "127.0.0.1:${GPC_GRAFANA_PORT:-3000}:3000"
     volumes:
       - gpc_grafana_data:/var/lib/grafana
       - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro

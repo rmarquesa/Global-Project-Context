@@ -108,6 +108,11 @@ across machines.
 After init, the hooks reindex incrementally in the background after every
 commit, merge and checkout. Logs go to `.gpc/index.log`.
 
+To also reconcile edits before a commit, explicitly start `gpc watch .` in a
+terminal. It requires an existing registered Git worktree and does not install a
+background service. See [Automatic local indexing](watcher.md) for debounce,
+retry, JSON events, shutdown and worktree isolation.
+
 ### Manual indexing
 
 When you want immediate control without going through Git:
@@ -123,9 +128,30 @@ The indexer hashes file contents and skips unchanged files. Useful flags:
 | `--limit-files N` | Index at most N files (smoke tests). Disables pruning. |
 | `--no-prune` | Do not remove records for files that disappeared. |
 | `--force` | Reindex even when the content hash is unchanged. |
-| `--reset` | Drop project chunks and reindex from scratch. |
+| `--reset` | Drop the selected repository's indexed files/vectors and reindex it; other repositories in the logical project are preserved. |
 | `--include-unknown-text` | Index text files with unrecognized extensions. |
 | `--follow-symlinks` | Follow symlinks during discovery. |
+
+#### Recovery after interrupted indexing
+
+An ordinary `gpc-index` pass compares each unchanged file's expected chunk IDs
+with its actual Qdrant projection. Missing or stale points cause that file to be
+reindexed; healthy unchanged files do not regenerate embeddings. After a failed
+projection write, rerunning the indexer reconciles the file's actual points rather
+than relying only on chunk IDs from the previous Postgres transaction.
+
+If the Qdrant collection was deleted, recreate it with the configured model and
+dimensions before rerunning the indexer. Recovery still requires the repository
+files and Ollama; it is not an offline restore from Postgres alone or a distributed
+transaction. Index runs now share a nonblocking lock for the canonical checkout
+root. A concurrent manual/hook run reports that the repository is busy; a watcher
+keeps it pending and retries. The local `.gpc/` metadata directory must be writable.
+This does not make a concurrently edited source tree an atomic snapshot.
+
+File removal and reset are repository-scoped. Internal legacy operations without
+a repository identity affect only legacy rows with a null `repo_id`, not all
+repositories in the project. Use the separately confirmed project-delete/reset
+commands only when whole-project or whole-stack removal is actually intended.
 
 ### Status and search
 
@@ -169,6 +195,16 @@ gpc context-pack "Graphify bridge rules" --project project-slug --include-graph 
 The pack includes retrieved chunks, citations, an approximate token count, and
 validation commands. It reads from GPC search and optional graph notes; it does
 not mutate indexes.
+
+The Markdown stays within the reported effective `max_chars` budget (minimum
+500 characters). When metadata or evidence cannot fit, the pack marks itself
+truncated; citations and included-chunk counts describe only the retained sources.
+Repository-qualified citations distinguish identical paths in different repos.
+Graph notes enrich the same search results instead of issuing a second semantic
+search. Graph unavailability falls back to semantic evidence.
+
+The separate MCP `gpc_context` block uses an effective range of 1,000–30,000
+characters. These are character budgets, not exact model-token limits.
 
 ## Health Reports
 

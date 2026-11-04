@@ -4,7 +4,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
-from gpc.search import compose_project_context, search_project_context
+from gpc.search import annotate_search_results, search_project_context
 
 
 @dataclass(frozen=True)
@@ -16,6 +16,8 @@ class ContextPackChunk:
     chunk_id: str | None = None
     repo_slug: str | None = None
     graph_notes: str | None = None
+    retrieval_sources: tuple[str, ...] = ()
+    ranking_signals: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -44,6 +46,8 @@ def build_context_pack(
     max_chunks: int = 8,
     max_chars: int = 12_000,
     include_graph: bool = False,
+    mode: str = "semantic",
+    task: str = "general",
 ) -> ContextPack:
     resolved_project, results = search_project_context(
         query,
@@ -51,23 +55,11 @@ def build_context_pack(
         cwd=cwd,
         repo=repo,
         limit=max_chunks,
+        mode=mode,
+        task=task,
     )
-    graph_notes_by_path: dict[str, str] = {}
-    warnings: list[str] = []
     if include_graph:
-        try:
-            _, _, context_block = compose_project_context(
-                query,
-                project=project,
-                cwd=cwd,
-                repo=repo,
-                max_chunks=max_chunks,
-                max_chars=max_chars,
-                include_graph=True,
-            )
-            graph_notes_by_path = _extract_graph_notes(context_block)
-        except Exception as exc:
-            warnings.append(f"Graph notes unavailable: {exc}")
+        results = annotate_search_results(resolved_project["slug"], results)
     chunks = [
         ContextPackChunk(
             path=result.relative_path,
@@ -76,7 +68,9 @@ def build_context_pack(
             score=result.score,
             chunk_id=result.chunk_id,
             repo_slug=result.repo_slug,
-            graph_notes=graph_notes_by_path.get(result.relative_path),
+            graph_notes=result.graph_notes,
+            retrieval_sources=getattr(result, "retrieval_sources", ()),
+            ranking_signals=getattr(result, "ranking_signals", ()),
         )
         for result in results
     ]
@@ -85,7 +79,6 @@ def build_context_pack(
         chunks,
         project_slug=resolved_project["slug"],
         max_chars=max_chars,
-        warnings=warnings,
         validation_commands=_validation_commands(resolved_project["slug"]),
     )
 
@@ -100,38 +93,60 @@ def render_context_pack(
     validation_commands: list[str] | None = None,
 ) -> ContextPack:
     budget = max(500, max_chars)
-    citations: list[dict[str, Any]] = []
-    warnings = warnings or []
-    validation_commands = validation_commands or ["./scripts/run_smoke_tests.sh"]
-    lines = ["# Context Pack", "", f"Query: {query}"]
-    if project_slug:
-        lines.append(f"Project: {project_slug}")
-    lines.extend(
-        ["", "## Project Summary", "Context generated from GPC semantic retrieval.", ""]
+    warnings = list(warnings or [])
+    validation_commands = list(
+        validation_commands
+        if validation_commands is not None
+        else ["./scripts/run_smoke_tests.sh"]
     )
-
     chunks_list = list(chunks)
-    if not chunks_list:
-        lines.append("No chunks retrieved for this query.")
-        lines.extend(_warnings_lines(warnings))
-        lines.extend(_validation_lines(validation_commands))
-        markdown = "\n".join(lines).strip() + "\n"
-        return ContextPack(
-            query,
-            project_slug,
-            markdown,
-            0,
-            budget,
-            False,
-            [],
-            _estimate_tokens(markdown),
-            warnings,
-            validation_commands,
+    marker = "_Truncated to fit character budget._\n\n"
+
+    def header(display_query: str, display_project: str | None) -> str:
+        lines = ["# Context Pack", "", f"Query: {display_query}"]
+        if display_project:
+            lines.append(f"Project: {display_project}")
+        return "\n".join(
+            lines
+            + [
+                "",
+                "## Project Summary",
+                "Context generated from GPC retrieval.",
+                "",
+                "",
+            ]
         )
 
-    truncated = False
-    included = 0
-    body_lines = list(lines)
+    prefix = header(query, project_slug)
+    suffix = "\n".join(
+        _warnings_lines(warnings)
+        + _validation_lines(validation_commands)
+        + ["## Citations", ""]
+    )
+    empty_message = (
+        "No chunks included within character budget.\n"
+        if chunks_list
+        else "No chunks retrieved for this query.\n"
+    )
+    # Compact only caller metadata, never source identities or citation records.
+    # The fixed compact form is <500 characters even at the minimum budget.
+    truncated = len(prefix) + len(suffix) + len(empty_message) + len(marker) > budget
+    if truncated:
+        prefix = header(
+            _trim_content(query, max_chars=60),
+            _trim_content(project_slug, max_chars=40) if project_slug else None,
+        )
+        suffix = "\n".join(
+            _warnings_lines(["Metadata omitted to fit character budget."])
+            + _validation_lines([])
+            + ["## Citations", ""]
+        )
+
+    sections: list[str] = []
+    citation_texts: list[str] = []
+    citations: list[dict[str, Any]] = []
+    # Reserve the omission notice up front; adding it cannot evict citations later.
+    remaining = budget - len(prefix) - len(suffix) - len(marker)
     for index, chunk in enumerate(chunks_list, start=1):
         citation = {
             "index": index,
@@ -140,48 +155,55 @@ def render_context_pack(
             "score": round(chunk.score, 6),
             "chunk_id": chunk.chunk_id,
             "repo_slug": chunk.repo_slug,
+            "retrieval_sources": list(chunk.retrieval_sources),
+            "ranking_signals": list(chunk.ranking_signals),
         }
-        section = [f"## [{index}] {chunk.path}", f"Score: {chunk.score:.4f}"]
+        citation_text = _citation_lines([citation])[1] + "\n"
+        heading = [f"## [{index}] {chunk.path}", f"Score: {chunk.score:.4f}"]
+        if chunk.repo_slug:
+            heading.append(f"Repository: {chunk.repo_slug}")
         if chunk.title:
-            section.append(f"Title: {chunk.title}")
-        section.extend(["", _trim_content(chunk.content), ""])
-        if chunk.graph_notes:
-            section.extend(["### Graph Notes", chunk.graph_notes.strip(), ""])
-        candidate = "\n".join(
-            body_lines
-            + section
-            + _warnings_lines(warnings)
-            + _validation_lines(validation_commands)
-            + _citation_lines(citations + [citation])
+            heading.append(f"Title: {chunk.title}")
+        section_header = "\n".join(heading) + "\n\n"
+        content = chunk.content.strip()
+        graph = (
+            "### Graph Notes\n" + chunk.graph_notes.strip() + "\n\n"
+            if chunk.graph_notes
+            else ""
         )
-        if len(candidate) > budget:
-            remaining = (
-                budget - len("\n".join(body_lines + _citation_lines(citations))) - 250
-            )
-            if remaining > 120 and included == 0:
-                section = section.copy()
-                section[-2] = _trim_content(chunk.content, max_chars=remaining)
-                body_lines.extend(section)
-                citations.append(citation)
-                included += 1
+        available = remaining - len(section_header) - len(citation_text) - 2
+        if available < len(content) + len(graph):
+            truncated = True
+            # Keep semantic evidence first. Omitted graph data is not substituted
+            # for chunk content, nor cited as though it were present.
+            graph = ""
+            if available < len(content):
+                if sections or available < 16:
+                    break
+                content = _trim_content(content, max_chars=available)
+        if available < 0:
             truncated = True
             break
-        body_lines.extend(section)
+        section = section_header + content + "\n\n" + graph
+        sections.append(section)
+        citation_texts.append(citation_text)
         citations.append(citation)
-        included += 1
-
-    if truncated:
-        body_lines.append("_Truncated to fit character budget._")
-        body_lines.append("")
-    body_lines.extend(_warnings_lines(warnings))
-    body_lines.extend(_validation_lines(validation_commands))
-    body_lines.extend(_citation_lines(citations))
-    markdown = "\n".join(body_lines).strip() + "\n"
+        remaining -= len(section) + len(citation_text)
+        if len(content) < len(chunk.content.strip()):
+            break
+    truncated = truncated or len(citations) < len(chunks_list)
+    markdown = (
+        prefix
+        + ("".join(sections) if sections else empty_message)
+        + (marker if truncated else "")
+        + suffix
+        + "".join(citation_texts)
+    )
     return ContextPack(
         query,
         project_slug,
         markdown,
-        included,
+        len(citations),
         budget,
         truncated,
         citations,
@@ -202,6 +224,8 @@ def _trim_content(content: str, *, max_chars: int | None = None) -> str:
     normalized = content.strip()
     if max_chars is None or len(normalized) <= max_chars:
         return normalized
+    if max_chars < 15:
+        return "." * max(0, min(3, max_chars))
     return normalized[: max(0, max_chars - 15)].rstrip() + "\n...[truncated]"
 
 
@@ -209,8 +233,9 @@ def _citation_lines(citations: list[dict[str, Any]]) -> list[str]:
     lines = ["## Citations"]
     for citation in citations:
         title = f" — {citation['title']}" if citation.get("title") else ""
+        repo = f" (repo={citation['repo_slug']})" if citation.get("repo_slug") else ""
         lines.append(
-            f"[{citation['index']}] {citation['path']}{title} (score={citation['score']})"
+            f"[{citation['index']}] {citation['path']}{title}{repo} (score={citation['score']})"
         )
     return lines
 
@@ -238,31 +263,3 @@ def _validation_commands(project_slug: str) -> list[str]:
 
 def _estimate_tokens(text: str) -> int:
     return max(1, len(text) // 4)
-
-
-def _extract_graph_notes(context_block: str) -> dict[str, str]:
-    notes: dict[str, str] = {}
-    current_path: str | None = None
-    collecting = False
-    buffer: list[str] = []
-    for raw_line in context_block.splitlines():
-        line = raw_line.strip()
-        if line.startswith("[") and "]" in line and "path=" in line:
-            if current_path and buffer:
-                notes[current_path] = "\n".join(buffer).strip()
-            current_path = line.split("path=", 1)[1].split()[0]
-            buffer = []
-            collecting = False
-        elif line.lower().startswith("graph neighbours") or line.lower().startswith(
-            "graph neighbors"
-        ):
-            collecting = True
-            buffer.append(raw_line)
-        elif collecting:
-            if line.startswith("[") and "]" in line and "path=" in line:
-                collecting = False
-            else:
-                buffer.append(raw_line)
-    if current_path and buffer:
-        notes[current_path] = "\n".join(buffer).strip()
-    return notes

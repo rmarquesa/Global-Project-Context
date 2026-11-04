@@ -173,7 +173,11 @@ Squash work-in-progress commits before opening a pull request.
 
 1. Fork and create a topic branch off `main`.
 2. Make your change. Keep PRs focused — one logical change per PR.
-3. Update or add documentation if your change is user-visible.
+3. For every user-visible feature, update its documentation (`docs/` and relevant
+   README examples) **and the product website in `site/`**. Keep commands, feature
+   claims and roadmap status consistent with the implementation. Distinguish
+   implemented behavior, validation still pending and planned work; do not imply
+   unmeasured performance gains or that local website edits have been deployed.
 4. Run the relevant smoke tests locally.
 5. Open the PR with a description that covers:
    - What changed.

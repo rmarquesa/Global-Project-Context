@@ -4,11 +4,12 @@ from datetime import date, datetime
 from decimal import Decimal
 import os
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 from uuid import UUID
 
 import psycopg
 from mcp.server.fastmcp import FastMCP
+from pydantic import Field
 from qdrant_client import QdrantClient
 
 from gpc.config import (
@@ -22,6 +23,7 @@ from gpc.config import (
     enforce_credentials,
 )
 from gpc.db import pg_connection
+from gpc.decisions import DecisionError, list_decisions
 from gpc.embeddings import active_embedding_model, embedding_dimension
 from gpc.drift import detect_drift, list_drift_signals
 from gpc.graph_query import (
@@ -35,7 +37,12 @@ from gpc.graph_query import (
 from gpc.self_metrics import collect_metrics, list_snapshots
 from gpc.mcp_observability import log_mcp_call
 from gpc.registry import list_projects, list_repos, resolve_project, resolve_repo
-from gpc.search import compose_project_context, search_project_context
+from gpc.search import (
+    SEARCH_MODES,
+    SEARCH_TASKS,
+    compose_project_context,
+    search_project_context,
+)
 from gpc.status import get_index_status
 from gpc.token_economy import estimate_for_project
 
@@ -197,13 +204,17 @@ def mcp_search(
     limit: int = 5,
     content_chars: int = 1_200,
     repo: str | list[str] | None = None,
+    mode: str = "semantic",
+    task: str = "general",
 ) -> dict[str, Any]:
-    """Search indexed project chunks with Ollama embeddings and Qdrant.
+    """Search indexed chunks using semantic, lexical, or hybrid retrieval.
 
     Pass ``repo`` (slug or list of slugs) to narrow the search to specific
-    repositories of the project.
+    repositories of the project. Scores are raw vector, lexical, or RRF scores,
+    respectively; ranking_signals explain task preferences in lexical/hybrid mode.
     """
     try:
+        _validate_retrieval_options(mode, task)
         safe_limit = max(1, min(limit, 20))
         safe_chars = max(200, min(content_chars, 8_000))
         resolved_project, results = search_project_context(
@@ -212,12 +223,16 @@ def mcp_search(
             cwd=_effective_cwd(cwd),
             limit=safe_limit,
             repo=repo,
+            mode=mode,
+            task=task,
         )
         return {
             "ok": True,
             "project": _project_payload(resolved_project),
             "query": query,
             "repo_filter": repo,
+            "mode": mode,
+            "task": task,
             "results": [
                 _search_result_payload(result, content_chars=safe_chars)
                 for result in results
@@ -225,6 +240,113 @@ def mcp_search(
         }
     except Exception as exc:
         return {"ok": False, "error": _error_payload(exc)}
+
+
+@mcp.tool(name="gpc_decisions")
+@log_mcp_call("gpc_decisions")
+def mcp_decisions(
+    query: str = "",
+    project: str | None = None,
+    cwd: str | None = None,
+    repo: str | None = None,
+    path: str | None = None,
+    limit: Annotated[int, Field(strict=True)] = 5,
+    content_chars: Annotated[int, Field(strict=True)] = 1_200,
+    include_inactive: Annotated[bool, Field(strict=True)] = False,
+) -> dict[str, Any]:
+    """Read curated decisions; defaults to approved/current indexed evidence only.
+
+    Freshness compares indexed content hashes, not live files. Inactive results
+    are diagnostic, not endorsed. Revision labels are caller-provided, not
+    verified commits. This tool never captures, approves, or invalidates decisions.
+    """
+    try:
+        if not isinstance(query, str) or len(query) > 512 or "\x00" in query:
+            raise DecisionError("query must be text of at most 512 characters")
+        for name, value in (("limit", limit), ("content_chars", content_chars)):
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise DecisionError(f"{name} must be an integer")
+        if not isinstance(include_inactive, bool):
+            raise DecisionError("include_inactive must be a boolean")
+        safe_limit = max(1, min(limit, 20))
+        safe_chars = max(0, min(content_chars, 4_000))
+        effective_query = query if query.strip() else None
+        resolved = resolve_project(project=project, cwd=_effective_cwd(cwd))
+        rows = list_decisions(
+            project=resolved["slug"],
+            repo=repo,
+            path=path,
+            query=effective_query,
+            limit=safe_limit,
+            include_inactive=include_inactive,
+        )
+        return {
+            "ok": True,
+            "project": _project_payload(resolved),
+            "query": effective_query,
+            "repo_filter": repo,
+            "path": path,
+            "include_inactive": include_inactive,
+            "evidence_basis": "indexed_content_hash",
+            "decisions": [
+                _decision_payload(row, safe_chars) for row in rows[:safe_limit]
+            ],
+        }
+    except DecisionError as exc:
+        return {
+            "ok": False,
+            "error": {"type": "DecisionError", "message": str(exc)[:512]},
+        }
+    except (psycopg.errors.UndefinedTable, psycopg.errors.UndefinedColumn):
+        return {
+            "ok": False,
+            "error": {
+                "type": "DecisionSchemaUnavailable",
+                "message": "Decision schema unavailable; apply migration 0011 using the documented migration procedure.",
+            },
+        }
+    except Exception:
+        return {
+            "ok": False,
+            "error": {
+                "type": "DecisionRetrievalError",
+                "message": "Decision retrieval failed.",
+            },
+        }
+
+
+def _decision_payload(row: dict[str, Any], content_chars: int) -> dict[str, Any]:
+    # Deliberate allowlist: no metadata, audit events, or arbitrary backend fields.
+    bounds = {
+        "id": 36,
+        "repo_id": 36,
+        "repo_slug": 128,
+        "decision_key": 128,
+        "title": 240,
+        "source_path": 512,
+        "source_hash": 128,
+        "source_file_id": 36,
+        "source_revision": 128,
+        "status": 32,
+        "freshness": 32,
+        "approved_by": 128,
+        "approved_at": 64,
+        "created_at": 64,
+        "updated_at": 64,
+    }
+    payload = {
+        key: str(row[key])[:bound] if row.get(key) is not None else None
+        for key, bound in bounds.items()
+    }
+    content = row.get("content")
+    content = content if isinstance(content, str) else ""
+    payload["content"] = content[:content_chars]
+    payload["content_truncated"] = len(content) > content_chars
+    payload["diagnostic_only"] = not (
+        row.get("status") == "approved" and row.get("freshness") == "current"
+    )
+    payload["source_revision_note"] = "Caller-provided label; not a verified commit."
+    return payload
 
 
 @mcp.tool(name="gpc_context")
@@ -238,21 +360,25 @@ def mcp_context(
     repo: str | list[str] | None = None,
     include_graph: bool = False,
     graph_min_confidence: str = "EXTRACTED",
+    mode: str = "semantic",
+    task: str = "general",
 ) -> dict[str, Any]:
     """Return a bounded context block suitable for an AI model prompt.
 
     Pass ``repo`` (slug or list of slugs) to narrow the context to specific
     repositories of the project.
 
-    Set ``include_graph=True`` for *hybrid retrieval*: each retrieved chunk
+    ``mode`` selects semantic, lexical, or hybrid (vector/lexical) retrieval.
+    Set ``include_graph=True`` for graph annotation: each retrieved chunk
     is augmented with a short footer listing its immediate neighbours in the
     Neo4j Graphify projection (callers, callees, cross-repo bridges). The
     footer carries ``confidence`` on every neighbour so the model cannot
     treat heuristics as fact. Default ``graph_min_confidence="EXTRACTED"``
     keeps INFERRED neighbours out unless the caller opts in. If the graph is
-    unavailable the call silently falls back to pure semantic retrieval.
+    unavailable the retrieved evidence is retained without graph annotations.
     """
     try:
+        _validate_retrieval_options(mode, task)
         if graph_min_confidence not in ALLOWED_CONFIDENCES:
             raise ValueError(
                 f"graph_min_confidence must be one of {ALLOWED_CONFIDENCES}, "
@@ -267,6 +393,8 @@ def mcp_context(
             repo=repo,
             include_graph=include_graph,
             graph_min_confidence=graph_min_confidence,
+            mode=mode,
+            task=task,
         )
         return {
             "ok": True,
@@ -274,6 +402,8 @@ def mcp_context(
             "query": query,
             "repo_filter": repo,
             "include_graph": include_graph,
+            "mode": mode,
+            "task": task,
             "context": context,
             "sources": [
                 _search_result_payload(result, content_chars=0) for result in results
@@ -692,6 +822,13 @@ def _repo_payload(repo: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _validate_retrieval_options(mode: str, task: str) -> None:
+    if mode not in SEARCH_MODES:
+        raise ValueError(f"mode must be one of {SEARCH_MODES}")
+    if task not in SEARCH_TASKS:
+        raise ValueError(f"task must be one of {SEARCH_TASKS}")
+
+
 def _search_result_payload(result: Any, *, content_chars: int) -> dict[str, Any]:
     content = result.content.strip()
     if content_chars <= 0:
@@ -707,6 +844,8 @@ def _search_result_payload(result: Any, *, content_chars: int) -> dict[str, Any]
         "chunk_type": result.chunk_type,
         "language": result.language,
         "repo_slug": getattr(result, "repo_slug", None),
+        "retrieval_sources": list(getattr(result, "retrieval_sources", ())),
+        "ranking_signals": list(getattr(result, "ranking_signals", ())),
     }
     if content_chars != 0:
         payload["content"] = content

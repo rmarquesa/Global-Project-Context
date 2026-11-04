@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 import hashlib
 from pathlib import Path
 import subprocess
@@ -10,7 +10,7 @@ from psycopg.rows import dict_row
 
 from gpc.db import pg_connection
 from gpc.indexer import SUPPORTED_EXTENSIONS, SUPPORTED_FILENAMES
-from gpc.registry import resolve_project
+from gpc.registry import list_repos, resolve_project
 
 IGNORED_PREFIXES = (".git/", "venv/", ".venv/", ".gpc/", "__pycache__/")
 IGNORED_PARTS = ("/__pycache__/",)
@@ -24,6 +24,8 @@ class StalenessReport:
     deleted_but_indexed: list[str]
     modified_since_index: list[str]
     graphify_report_stale: bool = False
+    unavailable_repos: list[str] = field(default_factory=list)
+    unassigned_indexed_files: list[str] = field(default_factory=list)
 
     @property
     def is_stale(self) -> bool:
@@ -32,6 +34,8 @@ class StalenessReport:
             or self.deleted_but_indexed
             or self.modified_since_index
             or self.graphify_report_stale
+            or self.unavailable_repos
+            or self.unassigned_indexed_files
         )
 
     @property
@@ -41,6 +45,8 @@ class StalenessReport:
             "deleted_but_indexed": len(self.deleted_but_indexed),
             "modified_since_index": len(self.modified_since_index),
             "graphify_report_stale": int(self.graphify_report_stale),
+            "unavailable_repos": len(self.unavailable_repos),
+            "unassigned_indexed_files": len(self.unassigned_indexed_files),
         }
 
     def to_dict(self) -> dict[str, object]:
@@ -52,7 +58,9 @@ class StalenessReport:
 
 
 def is_relevant_path(path: str) -> bool:
-    normalized = path.strip().lstrip("./")
+    normalized = path.strip()
+    while normalized.startswith("./"):
+        normalized = normalized[2:]
     if not normalized:
         return False
     if normalized.startswith("graphify-out/"):
@@ -95,23 +103,58 @@ def analyze_staleness(
 def detect_project_staleness(
     project: str | None = None, cwd: str | None = None
 ) -> StalenessReport:
+    """Check every registered repo, regardless of caller cwd.
+
+    Repo-less legacy projects use the project root. With registered repos, null
+    repo_id rows are reported separately: their ownership cannot be inferred.
+    Paths stay unqualified for a single repo and use ``repo:path`` for multiple.
+    """
     resolved = resolve_project(project=project, cwd=cwd)
-    root = Path(resolved["root_path"]).expanduser().resolve(strict=False)
-    tracked = _git_lines(root, ["ls-files", "--exclude-standard"])
-    present = _filter_present_indexable_files(
-        root,
-        _git_lines(root, ["ls-files", "--cached", "--others", "--exclude-standard"]),
-    )
-    indexed_info = _indexed_file_info(str(resolved["id"]))
-    indexed = list(indexed_info)
-    modified_paths = _modified_after_index(root, indexed_info)
-    graph_stale = _graphify_report_is_stale(root, tracked)
-    return analyze_staleness(
+    repos = list_repos(resolved["slug"])
+    scopes = repos or [
+        {"id": None, "slug": resolved["slug"], "root_path": resolved["root_path"]}
+    ]
+    missing: list[str] = []
+    deleted: list[str] = []
+    modified: list[str] = []
+    unavailable: list[str] = []
+    graph_stale = False
+    for repo in scopes:
+        try:
+            root = Path(repo["root_path"]).expanduser().resolve(strict=False)
+            tracked = _git_lines(root, ["ls-files", "--exclude-standard"])
+            present = _filter_present_indexable_files(
+                root,
+                _git_lines(
+                    root, ["ls-files", "--cached", "--others", "--exclude-standard"]
+                ),
+            )
+        except (OSError, TypeError, subprocess.CalledProcessError):
+            unavailable.append(repo["slug"])
+            continue
+        repo_id = str(repo["id"]) if repo["id"] is not None else None
+        info = _indexed_file_info(str(resolved["id"]), repo_id=repo_id)
+        report = analyze_staleness(
+            tracked_files=present,
+            indexed_files=info,
+            modified_files=_modified_after_index(root, info),
+        )
+        # Filter real relative paths before qualifying them (e.g. Dockerfile).
+        prefix = f"{repo['slug']}:" if len(repos) > 1 else ""
+        missing.extend(prefix + path for path in report.missing_from_index)
+        deleted.extend(prefix + path for path in report.deleted_but_indexed)
+        modified.extend(prefix + path for path in report.modified_since_index)
+        graph_stale = _graphify_report_is_stale(root, tracked) or graph_stale
+    return StalenessReport(
         project_slug=resolved["slug"],
-        tracked_files=present,
-        indexed_files=indexed,
-        modified_files=modified_paths,
-        graphify_report_is_stale=graph_stale,
+        missing_from_index=sorted(missing),
+        deleted_but_indexed=sorted(deleted),
+        modified_since_index=sorted(modified),
+        graphify_report_stale=graph_stale,
+        unavailable_repos=sorted(unavailable),
+        unassigned_indexed_files=(
+            sorted(_indexed_file_info(str(resolved["id"]))) if repos else []
+        ),
     )
 
 
@@ -128,6 +171,14 @@ def remediation_for_staleness(report: StalenessReport) -> list[str]:
     if report.graphify_report_stale:
         remediation.append(
             "Run graphify update ., then gpc graph-sync . --project <project> --repo <repo>."
+        )
+    if report.unavailable_repos:
+        remediation.append(
+            "Restore access to the registered repository paths and rerun the diagnostic."
+        )
+    if report.unassigned_indexed_files:
+        remediation.append(
+            "Review legacy index rows without repo identity before reindexing each registered repository."
         )
     return remediation
 
@@ -150,11 +201,13 @@ def _status_path(line: str) -> str:
     return path.strip()
 
 
-def _indexed_file_info(project_id: str) -> dict[str, dict[str, object]]:
+def _indexed_file_info(
+    project_id: str, repo_id: str | None = None
+) -> dict[str, dict[str, object]]:
     with pg_connection(row_factory=dict_row) as conn:
         rows = conn.execute(
-            "select relative_path, indexed_at, content_hash from gpc_files where project_id = %s",
-            (project_id,),
+            "select relative_path, indexed_at, content_hash from gpc_files where project_id = %s and repo_id is not distinct from %s",
+            (project_id, repo_id),
         ).fetchall()
     return {
         row["relative_path"]: {

@@ -1,18 +1,21 @@
 # Automation
 
-GPC automates two layers:
+GPC offers three local automation layers:
 
 1. **Global commands** installed into your `PATH` by `./install.sh`.
 2. **Per-project Git hooks** installed by `gpc init` to keep each project's
    index in sync.
+3. **Optional foreground watcher**, started explicitly with `gpc watch`, to
+   reconcile edits before they are committed. See [Automatic local indexing](watcher.md).
 
-A third optional layer pushes per-repository [Graphify](graphify.md) graphs
+A separate optional layer pushes per-repository [Graphify](graphify.md) graphs
 into Neo4j after each commit. That layer is independent and documented in
 [graphify.md](graphify.md).
 
-The MCP server itself is read-only. Indexing and embedding writes always
-happen through the CLI or the Git hooks below, so expensive operations stay
-explicit, inspectable and logged.
+The MCP retrieval path does not edit source files or indexes (optional metrics
+tools can persist operational data). Indexing and embedding writes happen through
+the CLI, explicitly started watcher or Git hooks below, so expensive operations
+stay explicit, inspectable and logged.
 
 ## Global Commands
 
@@ -138,7 +141,7 @@ docker compose --profile http up -d gpc-mcp-http
 ```
 
 > ⚠️ Bind to `127.0.0.1` only unless you put authentication in front. See
-> [SECURITY.md](../SECURITY.md#mcp-http-exposure).
+> [SECURITY.md](../SECURITY.md#local-network-defaults-and-mcp-http-exposure).
 
 ## See Also
 

@@ -42,7 +42,7 @@
     />
     <meta name="twitter:image" content="https://rmarquesa.github.io/Global-Project-Context/og-image.png" />
 
-    <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="./styles.css?v=20261104" />
 
     <script type="application/ld+json">
     {
@@ -105,9 +105,9 @@
       <nav>
         <a href="#pipeline">Pipeline</a>
         <a href="#explorer">Explore the graph</a>
-        <a href="#demo">Live MCP demo</a>
+        <a href="#demo">MCP demo</a>
         <a href="#operations">Operations</a>
-        <a href="#observability">Observability</a>
+        <a href="#context-engine">Context engine</a>
         <a href="#multi">Multi-repo</a>
         <a href="#roadmap">Roadmap</a>
         <a href="#faq">FAQ</a>
@@ -134,7 +134,7 @@
             3,575 edges, 57 communities — not decoration.
           </p>
           <div class="hero__actions" aria-label="Primary actions">
-            <a class="button" href="#demo">See a live query</a>
+            <a class="button" href="#context-engine">See what’s new</a>
             <a class="button button--ghost" href="https://github.com/rmarquesa/Global-Project-Context" target="_blank" rel="noreferrer">GitHub</a>
             <a class="link" href="#explorer">Explore the graph</a>
           </div>
@@ -159,8 +159,8 @@
           <ul class="valueList">
             <li><strong>Less pasting</strong><span>Stop dropping files and architecture explanations into every prompt.</span></li>
             <li><strong>One index, many tools</strong><span>Codex, Claude, Copilot and Gemini all read the same indexed project through MCP.</span></li>
-            <li><strong>Survives sessions and branches</strong><span>Git hooks reindex after every commit, merge and checkout, so retrieval reflects the current code.</span></li>
-            <li><strong>Stays on your machine</strong><span>Embeddings run locally with Ollama. Project text never leaves the box.</span></li>
+            <li><strong>Context beyond the chat</strong><span>Optional Git hooks or a foreground watcher reconcile the current checkout. Approved decisions retain indexed-source evidence.</span></li>
+            <li><strong>Local indexing</strong><span>Embeddings run locally with Ollama. Your chosen AI client controls where retrieved context goes next.</span></li>
           </ul>
         </div>
       </section>
@@ -173,7 +173,7 @@
           <p class="section__lead">
             GPC now includes a small operator surface around the read-only MCP server.
             These commands keep writes in CLI/indexer paths while giving humans and
-            agents a fast way to prove the local context is fresh and useful.
+            agents evidence to inspect before relying on local context.
           </p>
         </div>
         <div class="opsGrid">
@@ -190,7 +190,7 @@
           <article>
             <span>Quality</span>
             <h3><code>gpc eval-search</code></h3>
-            <p>Run fixture-based recall checks before changing chunking, embeddings, repo filters or retrieval behavior.</p>
+            <p>Compare semantic, lexical and hybrid retrieval on labeled queries. Inspect recall, MRR, nDCG and latency before making quality claims.</p>
           </article>
           <article>
             <span>Handoff</span>
@@ -215,9 +215,9 @@
           <p class="kicker">Indexing pipeline</p>
           <h2 id="pipeline-title">From repository to retrievable context, fully local.</h2>
           <p class="section__lead">
-            Four jobs, four local services. Each stage below activates as the
-            pipeline processes a chunk on your machine — no round trip to any
-            remote API.
+            Four stages, illustrated below. Indexing and embeddings stay local;
+            retrieval searches the stored context, not arbitrary live files.
+            Graphify remains a separate indexing workflow.
           </p>
         </div>
 
@@ -229,7 +229,7 @@
               <span class="pipelineStage__num">01</span>
               <h3>Index</h3>
             </header>
-            <p><code>gpc init</code> scans files, chunks them, writes rows to Postgres. Git hooks rerun on commit / merge / checkout.</p>
+            <p><code>gpc init</code> registers and indexes a checkout. Optional hooks or <code>gpc watch .</code> trigger incremental indexing with shared local locks.</p>
             <pre class="pipelineStage__payload"><code>chunk#471 · gpc/mcp_server.py · 312 tokens</code></pre>
           </article>
 
@@ -247,7 +247,7 @@
               <span class="pipelineStage__num">03</span>
               <h3>Store</h3>
             </header>
-            <p>Postgres holds canonical state — projects, files, chunks, hashes, runs. Qdrant holds the vectors that point back to it.</p>
+            <p>Postgres holds projects, files, chunks, hashes, runs and reviewed decisions. Qdrant holds vectors pointing back to source chunks.</p>
             <pre class="pipelineStage__payload"><code>upsert OK · qdrant://global-project-context</code></pre>
           </article>
 
@@ -256,20 +256,85 @@
               <span class="pipelineStage__num">04</span>
               <h3>Retrieve</h3>
             </header>
-            <p>AI clients call the MCP server. It embeds the query, searches Qdrant, hydrates chunks from Postgres, returns a bounded context block.</p>
+            <p>MCP returns bounded, cited context. Semantic is the default; opt into lexical or hybrid retrieval and explicit task preferences.</p>
             <pre class="pipelineStage__payload"><code>gpc.search → 4 hits · 1,387 tokens</code></pre>
           </article>
         </div>
       </section>
 
+      <section id="context-engine" class="section contextSection" aria-labelledby="context-title">
+        <div class="section__intro">
+          <p class="kicker">Context-engine evolution</p>
+          <h2 id="context-title">Keep context fresh. Find the detail. Preserve the decision.</h2>
+          <p class="section__lead">Three explicit, local workflows — not an autonomous agent or automatic chat memory. Implemented capabilities are separate from live validation and future work.</p>
+        </div>
+
+        <div class="contextGrid">
+          <article class="contextCard">
+            <p class="contextCard__status">Implemented · opt-in</p>
+            <h3>Watch the checkout you’re editing.</h3>
+            <p>Start a foreground polling watcher for a registered repository. Debounce, retries and branch/worktree detection reconcile edits; shared local locks coordinate watcher, manual and hook indexing.</p>
+            <pre tabindex="0" aria-label="Start the optional local watcher"><code>gpc watch .</code></pre>
+            <p class="contextCard__note">No autostart, daemon or Graphify regeneration. This is the current checkout, not branch history; each linked worktree needs its own registered repo identity. Freshness depends on polling and indexing.</p>
+            <a class="contextCard__link" href="https://github.com/rmarquesa/Global-Project-Context/blob/main/docs/watcher.md" target="_blank" rel="noreferrer">Watcher setup and limits ↗</a>
+          </article>
+
+          <article class="contextCard">
+            <p class="contextCard__status">Implemented · semantic default</p>
+            <h3>Match meaning and exact identifiers.</h3>
+            <p>Choose semantic, lexical (no embeddings) or hybrid rank fusion. Add repo filters and an explicit task: general, debug, implement, review or test. Results retain retrieval provenance.</p>
+            <pre tabindex="0" aria-label="Hybrid search with an explicit debugging task"><code>gpc search 'index_project_path' \
+  --project gpc --mode hybrid --task debug</code></pre>
+            <p class="contextCard__note"><code>gpc_search</code> and <code>gpc_context</code> accept mode/task too. Identifier matching is textual, not an AST symbol index. Graph notes are independent post-retrieval annotations.</p>
+            <a class="contextCard__link" href="https://github.com/rmarquesa/Global-Project-Context/blob/main/docs/hybrid-search.md" target="_blank" rel="noreferrer">Retrieval modes and evaluation ↗</a>
+          </article>
+
+          <article class="contextCard contextCard--memory">
+            <div>
+              <p class="contextCard__status">Implemented · explicit human review</p>
+              <h3>Remember why, with evidence attached.</h3>
+              <p>Capture a decision as pending, then approve it explicitly. Scope it to a project, repository and indexed source path. Evidence uses source content hashes to check freshness against the index — not to prove the live Git checkout is current.</p>
+              <p>Read-only MCP <code>gpc_decisions</code> returns approved, current decisions by default. Optional inactive diagnostics expose other states. Invalidation needs an actor and reason; supersession is explicit for the same key, not AI contradiction detection.</p>
+              <p class="contextCard__note">The actor is a local label, not an authenticated identity. No automatic conversation capture. Review and apply migration <code>0011</code> with <code>gpc migrate</code> before use; no hosted deployment is implied.</p>
+              <a class="contextCard__link" href="https://github.com/rmarquesa/Global-Project-Context/blob/main/docs/decision-memory.md" target="_blank" rel="noreferrer">Evidence-backed memory and delivery scope ↗</a>
+            </div>
+            <div class="contextCard__example">
+              <p class="contextCard__caption">Example · index src/auth.py first</p>
+              <pre tabindex="0" aria-label="Capture, approve and list a decision"><code>gpc decision capture \
+  --project product --repo api \
+  --key auth-policy \
+  --title 'Validate sessions centrally' \
+  --content 'Session checks belong in the API boundary.' \
+  --source-path src/auth.py --actor maintainer
+
+# Use the ID returned by capture.
+gpc decision approve &lt;id&gt; \
+  --project product --repo api --actor maintainer
+
+gpc decision list --project product --repo api</code></pre>
+            </div>
+          </article>
+        </div>
+
+        <aside class="contextValidation" aria-labelledby="context-validation-title">
+          <div>
+            <p class="kicker">Live validation pending</p>
+            <h3 id="context-validation-title">Measure before calling it better.</h3>
+            <p>Compare modes on your own labeled fixture. Edit-to-search freshness, live SQL performance, representative relevance and answer correctness still need validation. Unit tests are not production benchmarks; fewer tokens do not prove a better answer.</p>
+          </div>
+          <pre tabindex="0" aria-label="Compare retrieval on a project-specific evaluation fixture"><code>gpc eval-search --project gpc \
+  --fixture eval.yaml --compare --json</code></pre>
+        </aside>
+      </section>
+
       <section id="demo" class="section demoSection" aria-labelledby="demo-title">
         <div class="section__intro">
-          <p class="kicker">Live MCP demo</p>
+          <p class="kicker">Recorded MCP demo</p>
           <h2 id="demo-title">This is what your AI tool sees through GPC.</h2>
           <p class="section__lead">
-            Pick a question. The widget shows the exact MCP call, the streamed
-            response, and the tokens saved versus pasting the relevant files
-            into the prompt.
+            Pick a recorded question to replay a sample request and response.
+            This static illustration reads bundled data, not a running backend.
+            Its historical token counts do not benchmark the new retrieval modes.
           </p>
         </div>
 
@@ -303,12 +368,12 @@
             <div>
               <span class="mcpDemo__tokensKicker">With GPC</span>
               <strong data-demo-after>0</strong>
-              <small>tokens — only the chunks Qdrant returns for the query</small>
+              <small>tokens — retrieved context in this recorded example</small>
             </div>
             <div class="mcpDemo__savings">
               <span class="mcpDemo__tokensKicker">Saved</span>
               <strong><span data-demo-saved>0</span>%</strong>
-              <small>Measured with <code>gpc token-savings</code> on this repository</small>
+              <small>Recorded <code>gpc token-savings</code> sample, not answer-quality evidence</small>
             </div>
           </div>
         </div>
@@ -495,36 +560,39 @@
       <section id="roadmap" class="section" aria-labelledby="roadmap-title">
         <div class="section__intro">
           <p class="kicker">Delivery status</p>
-          <h2 id="roadmap-title">Core local-first capabilities are delivered. Next comes validation and product planning.</h2>
+          <h2 id="roadmap-title">Implemented is not the same as validated in production.</h2>
           <p class="section__lead">
-            GPC now includes cross-project auditing, graph freshness measurement,
-            longitudinal metrics, drift signals, human-reviewed auto-research,
-            and graph-derived test portfolios. It does not auto-merge proposals.
+            The current evolution adds local freshness, task-aware retrieval and
+            evidence-backed decisions. Live-store validation comes next;
+            broader engineering context remains planned.
           </p>
         </div>
         <div class="valueGrid">
           <div>
-            <h3>Available now</h3>
+            <h3>Implemented</h3>
             <ul class="valueList">
+              <li><strong>Foreground watcher</strong><span>Optional polling, debounce, retry and current-checkout reconciliation.</span></li>
+              <li><strong>Hybrid retrieval</strong><span>Lexical/vector rank fusion, explicit task preferences and comparison reports. Apply migration <code>0010</code> with <code>gpc migrate</code> before lexical/hybrid use.</span></li>
+              <li><strong>Reviewed decisions</strong><span>Explicit capture, approval, invalidation and supersession; read-only retrieval with indexed-source evidence.</span></li>
               <li><strong>Cross-project audit</strong><span><code>gpc audit cross-project</code> summarizes graph and convention findings.</span></li>
               <li><strong>Continuous signals</strong><span><code>gpc metrics collect-all</code> and drift detection produce evidence, not automatic code changes.</span></li>
               <li><strong>Test portfolio</strong><span><code>gpc graph test-portfolio</code> finds graph-derived coverage and rationale-integrity gaps.</span></li>
             </ul>
           </div>
           <div>
-            <h3>Current TODOs</h3>
+            <h3>Validation pending / planned</h3>
             <ul class="valueList">
-              <li><strong>Onboard projects</strong><span>Validate two additional real projects, including one multi-repo project.</span></li>
-              <li><strong>Audit findings</strong><span>Run the audit across those projects and create issues for critical gaps.</span></li>
-              <li><strong>Close the learning loop</strong><span>Collect two weeks of metrics and merge one human-reviewed proposal.</span></li>
-              <li><strong>Plan the next product phase</strong><span>The proposed commercial roadmap starts with tenant isolation, authentication, onboarding, billing, and a licensing decision.</span></li>
+              <li><strong>Pending: live validation</strong><span>Use disposable services for migrations, index recovery and memory lifecycle checks; measure freshness, relevance, SQL performance and answer correctness.</span></li>
+              <li><strong>Planned: richer retrieval</strong><span>AST symbol retrieval, learned reranking and graph-expanded candidates are not implemented.</span></li>
+              <li><strong>Planned: engineering context</strong><span>Scoped ADR, PR and issue connectors, plus diff-focused impact/review packs.</span></li>
+              <li><strong>Planned: broader validation</strong><span>Exercise additional real projects, including a multi-repo product, and review longitudinal audit and drift evidence.</span></li>
             </ul>
           </div>
         </div>
         <p class="section__lead">
-          The validation target is stack-agnostic: a Cloudflare backend is not
-          required. The commercial phase is a proposal, not a delivery
-          commitment. See the full, evidence-backed <a href="https://github.com/rmarquesa/Global-Project-Context/blob/main/docs/roadmap.md" target="_blank" rel="noreferrer">roadmap on GitHub</a>.
+          No autonomous code editing, automatic PR approval or hosted multi-tenant
+          service is included. Migrations are explicit operator actions, not automatic
+          setup. See the full <a href="https://github.com/rmarquesa/Global-Project-Context/blob/main/docs/roadmap.md" target="_blank" rel="noreferrer">roadmap on GitHub</a>.
         </p>
       </section>
 
@@ -587,11 +655,28 @@
             <div class="faqItem__body" itemscope itemprop="acceptedAnswer" itemtype="https://schema.org/Answer">
               <div itemprop="text">
                 <p>
-                  Git hooks reindex incrementally after every commit, merge and checkout. Only the
-                  chunks whose content hash changed are re-embedded — so branch switches take
-                  seconds, not minutes, and retrieval always reflects the current code.
+                  Optional Git hooks trigger incremental indexing after commit, merge and checkout.
+                  For edits between Git commands, run <code>gpc watch .</code> in the foreground.
+                  It polls, debounces changes and retries failed or busy runs with shared local
+                  index locks. Healthy unchanged files avoid redundant embedding. It does not
+                  autostart or rebuild Graphify, and freshness depends on reconciliation completing.
+                  The index represents the current checkout, not every branch's history.
                 </p>
               </div>
+            </div>
+          </details>
+
+          <details class="faqItem" itemscope itemprop="mainEntity" itemtype="https://schema.org/Question">
+            <summary itemprop="name">Can I search without embeddings or choose context for a task?</summary>
+            <div class="faqItem__body" itemscope itemprop="acceptedAnswer" itemtype="https://schema.org/Answer">
+              <div itemprop="text"><p>Semantic remains the default. Lexical mode uses Postgres for full-text, literal identifier and path matching without embeddings; hybrid combines lexical and semantic candidates using reciprocal rank fusion. CLI search and MCP <code>gpc_search</code>/<code>gpc_context</code> accept explicit mode, task and repository filters. Task preferences are lightweight heuristics, not a learned reranker. Compare a project-specific fixture before claiming a quality gain.</p></div>
+            </div>
+          </details>
+
+          <details class="faqItem" itemscope itemprop="mainEntity" itemtype="https://schema.org/Question">
+            <summary itemprop="name">Does decision memory automatically learn from my conversations?</summary>
+            <div class="faqItem__body" itemscope itemprop="acceptedAnswer" itemtype="https://schema.org/Answer">
+              <div itemprop="text"><p>No. A human explicitly captures and approves a decision through the CLI. It is scoped to a project, repository and indexed path, with content-hash evidence. Current means current relative to the index, not proof of live Git freshness. Read-only <code>gpc_decisions</code> defaults to approved, current entries. Invalidation needs an actor and reason; same-key supersession is explicit. Actor labels are not authenticated identities.</p></div>
             </div>
           </details>
 
@@ -630,10 +715,11 @@
             <div class="faqItem__body" itemscope itemprop="acceptedAnswer" itemtype="https://schema.org/Answer">
               <div itemprop="text">
                 <p>
-                  Measured on this repository with <code>gpc token-savings</code>: 25,737 tokens
-                  for the full indexed corpus vs. 1,387 tokens for a focused retrieval — a 94.6%
-                  reduction. Real savings depend on project size and query specificity, but the
-                  shape is consistent: pay only for the chunks Qdrant returns.
+                  The bundled historical <code>gpc token-savings</code> sample records 25,737
+                  indexed tokens versus 1,387 retrieved tokens — a 94.6% reduction for that
+                  example. This is not a benchmark of the current checkout or hybrid retrieval.
+                  Measure your own corpus and queries; fewer tokens alone do not establish
+                  answer correctness or total model cost.
                 </p>
               </div>
             </div>
@@ -680,7 +766,7 @@
     </footer>
 
     <script src="./graph.js?v=20260507" defer></script>
-    <script src="./mcp-demo.js?v=20260507" defer></script>
+    <script src="./mcp-demo.js?v=20261104" defer></script>
     <script src="./pipeline.js?v=20260507" defer></script>
   </body>
 </html>

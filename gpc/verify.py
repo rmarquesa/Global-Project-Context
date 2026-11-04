@@ -172,6 +172,16 @@ def verify_index_state(
             remediation="Run gpc-index . --slug <project> and verify filters are not excluding useful files.",
             details={"files": files, "chunks": chunks, "qdrant_points": points},
         )
+    if points != chunks:
+        difference = points - chunks
+        direction = "excess" if difference > 0 else "missing"
+        return VerificationCheck(
+            "index_state",
+            "warn",
+            f"Qdrant has {abs(difference)} {direction} points relative to indexed chunks (chunks={chunks}, qdrant_points={points}); equal counts would not prove point identity.",
+            remediation="Inspect the index run and Qdrant collection, then rerun gpc-index after resolving the discrepancy; no vectors were changed by this check.",
+            details={"files": files, "chunks": chunks, "qdrant_points": points},
+        )
     return VerificationCheck(
         "index_state",
         "pass",
