@@ -59,7 +59,7 @@ by FIFO, socket, directory and hardlink regressions. No watcher was enabled agai
 the user's repositories/services. The Windows locking branch remains untested on
 this macOS host; end-to-end freshness with real stores is not yet benchmarked.
 
-### 2. Task-aware retrieval (implemented; live evaluation pending)
+### 2. Task-aware retrieval (implemented; representative evaluation pending)
 
 Evaluate lexical and symbol retrieval alongside vectors, bounded graph expansion
 and optional local reranking. Use the same representative tasks for baseline and
@@ -88,7 +88,7 @@ matching regression was corrected before acceptance, with 32 evaluation tests;
 the CLI/MCP/context integration added 34 tests. SQL remains contract-tested with
 fake backends, not validated by execution on PostgreSQL.
 
-### 3. Evidence-backed memory (implemented; live-store validation pending)
+### 3. Evidence-backed memory (implemented; local PostgreSQL validation passed)
 
 Build on the decisions schema with capture, approval, retrieval and invalidation.
 Scope each memory to a project/repository/path and retain its source, confidence,
@@ -159,6 +159,14 @@ passed. The legacy `embedding` fixture header is accepted by both YAML loaders;
 real PostgreSQL upgrade, reset/reapply, lexical SQL and decision lifecycle checks
 passed 75 assertions in the ownership-guarded temporary database. A protected
 backup was successfully restored before any real-schema promotion.
+
+Subsequent local promotion applied migrations 0010/0011, preserved all application
+data and volumes, and passed 32 real MCP/rollout checks. See the
+[OrbStack validation report](2026-11-04-orbstack-validation.md) for measured
+results, the retained vector-count warning and remaining evaluation limits.
+The final isolated indexing/watcher phase passed another 19 checks, including
+missing-vector recovery, edit/rename/delete reconciliation and stale-decision
+exclusion. Its temporary database and Qdrant container were removed after checks.
 
 ## Product references
 

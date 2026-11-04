@@ -619,8 +619,10 @@ licenciamento.
       relevância em produção não foram estabelecidos; ver [busca híbrida](hybrid-search.md).
 - [ ] Reranking aprendido e recuperação de símbolos via AST.
 - [x] Memória de decisões com captura, aprovação, invalidação, supersessão e
-      evidência de fonte indexada. CLI/MCP validados localmente; validação com
-      PostgreSQL descartável ainda pendente. Ver [memória de decisões](decision-memory.md).
+      evidência de fonte indexada. CLI/MCP, migrações e ciclo de vida validados
+      também em PostgreSQL local isolado; concorrência e desempenho representativos
+      continuam pendentes. Ver [memória de decisões](decision-memory.md) e o
+      [relatório OrbStack](plans/2026-11-04-orbstack-validation.md).
 - [ ] Conectores de ADRs/PRs/issues e feedback de code review. A inspiração no
       Augment não estabelece equivalência funcional ou de qualidade.
 - [ ] Dashboard web orientado a produto (além do Grafana técnico atual em

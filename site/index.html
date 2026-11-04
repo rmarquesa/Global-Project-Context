@@ -171,9 +171,10 @@
           <p class="kicker">Operator workflow</p>
           <h2 id="operations-title">Verify, evaluate, package and audit context before trusting it.</h2>
           <p class="section__lead">
-            GPC now includes a small operator surface around the read-only MCP server.
-            These commands keep writes in CLI/indexer paths while giving humans and
-            agents evidence to inspect before relying on local context.
+            GPC now includes a small operator surface around its retrieval-focused MCP server.
+            Content and decision writes stay in CLI/indexer paths; MCP retrieval
+            may record operational telemetry. Inspect the evidence before relying
+            on local context.
           </p>
         </div>
         <div class="opsGrid">
@@ -318,9 +319,10 @@ gpc decision list --project product --repo api</code></pre>
 
         <aside class="contextValidation" aria-labelledby="context-validation-title">
           <div>
-            <p class="kicker">Live validation pending</p>
+            <p class="kicker">Local checks passed · evaluation continues</p>
             <h3 id="context-validation-title">Measure before calling it better.</h3>
-            <p>Compare modes on your own labeled fixture. Edit-to-search freshness, live SQL performance, representative relevance and answer correctness still need validation. Unit tests are not production benchmarks; fewer tokens do not prove a better answer.</p>
+            <p>PostgreSQL migration, decision lifecycle and real MCP protocol checks passed on a local OrbStack installation. Isolated indexing and watcher checks also covered vector recovery and file changes. Compare modes on your own labeled fixture: representative relevance, large-corpus SQL performance and answer correctness still need evaluation. Local checks are not production benchmarks; fewer tokens do not prove a better answer.</p>
+            <a class="contextCard__link" href="https://github.com/rmarquesa/Global-Project-Context/blob/main/docs/plans/2026-11-04-orbstack-validation.md" target="_blank" rel="noreferrer">Local validation evidence and remaining limits ↗</a>
           </div>
           <pre tabindex="0" aria-label="Compare retrieval on a project-specific evaluation fixture"><code>gpc eval-search --project gpc \
   --fixture eval.yaml --compare --json</code></pre>
@@ -563,7 +565,7 @@ gpc decision list --project product --repo api</code></pre>
           <h2 id="roadmap-title">Implemented is not the same as validated in production.</h2>
           <p class="section__lead">
             The current evolution adds local freshness, task-aware retrieval and
-            evidence-backed decisions. Live-store validation comes next;
+            evidence-backed decisions. Selected local live-store checks have passed;
             broader engineering context remains planned.
           </p>
         </div>
@@ -582,7 +584,7 @@ gpc decision list --project product --repo api</code></pre>
           <div>
             <h3>Validation pending / planned</h3>
             <ul class="valueList">
-              <li><strong>Pending: live validation</strong><span>Use disposable services for migrations, index recovery and memory lifecycle checks; measure freshness, relevance, SQL performance and answer correctness.</span></li>
+              <li><strong>Next: representative evaluation</strong><span>Local migration, memory lifecycle and MCP checks passed. Broader concurrency, freshness, relevance, large-corpus performance and answer correctness still need controlled evaluation.</span></li>
               <li><strong>Planned: richer retrieval</strong><span>AST symbol retrieval, learned reranking and graph-expanded candidates are not implemented.</span></li>
               <li><strong>Planned: engineering context</strong><span>Scoped ADR, PR and issue connectors, plus diff-focused impact/review packs.</span></li>
               <li><strong>Planned: broader validation</strong><span>Exercise additional real projects, including a multi-repo product, and review longitudinal audit and drift evidence.</span></li>
