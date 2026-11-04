@@ -12,6 +12,12 @@ The [recorded local comparison](plans/2026-11-04-retrieval-diagnostics.md)
 exposes both coverage and retrieval misses; it did not demonstrate a hybrid or
 lexical improvement. Semantic retrieval remains the default.
 
+A subsequent [current-corpus isolated experiment](plans/2026-11-04-current-corpus-evaluation.md)
+made every expected source available and excluded fixtures/provenance from the
+index. Semantic had the highest recall in both development fixtures; repeated
+chunks from one file still occupied all five slots in several Portuguese cases.
+Corpus changes prevent attributing the different scores to ranking improvements.
+
 ## Cases and provenance
 
 The language split is six English and six Portuguese queries. Paths below are
