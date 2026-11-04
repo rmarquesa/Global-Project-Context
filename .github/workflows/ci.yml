@@ -73,8 +73,7 @@ jobs:
         run: python -m mypy
 
       - name: Run unit tests
-        # Smoke tests need live Postgres/Qdrant/Neo4j/Ollama and are excluded via
-        # pyproject's addopts (--ignore=tests/smoke).
+        # pyproject's addopts exclude both smoke and marked integration tests.
         run: python -m pytest
 
   integration:
@@ -174,6 +173,14 @@ jobs:
           # docs/architecture.md at #18.
           # Small batches keep each CPU embedding request well under the timeout.
           python -m gpc.cli index . --slug gpc --limit-files 40 --batch-size 4
+
+      - name: Run graph integration tests
+        # Override default selection only against this job's disposable services.
+        run: >-
+          python -m pytest -o addopts='' -m integration
+          tests/test_graphify_freshness.py
+          tests/test_graph_test_portfolio.py
+          tests/test_multi_repo_graph_path.py
 
       - name: Run smoke suite
         # run_smoke_tests.sh defaults PYTHON_BIN to ./venv/bin/python and checks

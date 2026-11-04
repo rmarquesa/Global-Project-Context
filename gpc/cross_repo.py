@@ -407,10 +407,13 @@ def _collect_package_imports(session, project_slug: str) -> list[dict]:
         right["label"] = row.get("b_label")
         left_key, right_key = _package_import_key(left), _package_import_key(right)
         if left_key and left_key == right_key:
-            pairs.append({
-                "a_id": row["a_id"], "b_id": row["b_id"],
-                "evidence": f"package:{left_key}",
-            })
+            pairs.append(
+                {
+                    "a_id": row["a_id"],
+                    "b_id": row["b_id"],
+                    "evidence": f"package:{left_key}",
+                }
+            )
     return pairs
 
 
@@ -514,7 +517,8 @@ def build_bridges(
             package_pairs: list[dict] = []
             if RULE_PACKAGE_IMPORT in active_rules:
                 package_pairs = [
-                    row for row in _collect_package_imports(session, project_slug)
+                    row
+                    for row in _collect_package_imports(session, project_slug)
                     if (row["a_id"], row["b_id"]) not in already_hash_bridged
                 ]
             stats.pairs_package_import = len(package_pairs)

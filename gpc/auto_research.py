@@ -42,7 +42,9 @@ def generate_proposal(
     summary = graph_summary_loader(project_slug, top_k_gods=5)
     proposal_slug = _proposal_slug(signals)
     day = generated_on or date.today()
-    destination = Path(output_dir) / f"{day.isoformat()}-{project_slug}-{proposal_slug}.md"
+    destination = (
+        Path(output_dir) / f"{day.isoformat()}-{project_slug}-{proposal_slug}.md"
+    )
 
     if destination.exists() and not overwrite:
         raise FileExistsError(
@@ -139,11 +141,10 @@ def _render_proposal(
             f"and {len(communities)} reported community record(s)."
         )
         if god_nodes:
-            labels = [
-                str(node.get("label", "unknown"))
-                for node in god_nodes[:5]
-            ]
-            lines.append(f"Topological focus for review: {', '.join(f'`{label}`' for label in labels)}.")
+            labels = [str(node.get("label", "unknown")) for node in god_nodes[:5]]
+            lines.append(
+                f"Topological focus for review: {', '.join(f'`{label}`' for label in labels)}."
+            )
     else:
         lines.append("No Graphify projection is currently available for this project.")
 
@@ -180,7 +181,9 @@ def _render_proposal(
 
 
 def _proposal_slug(signals: list[dict[str, Any]]) -> str:
-    candidate = str(signals[0].get("signal_type", "")) if signals else "metrics-baseline"
+    candidate = (
+        str(signals[0].get("signal_type", "")) if signals else "metrics-baseline"
+    )
     normalized = re.sub(r"[^a-z0-9]+", "-", candidate.lower()).strip("-")
     return normalized or "metrics-baseline"
 

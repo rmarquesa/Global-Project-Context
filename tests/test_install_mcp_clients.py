@@ -7,7 +7,6 @@ import pytest
 
 import scripts.install_mcp_clients as installer
 
-
 # ---------------------------------------------------------------------------
 # parse_clients / server_config
 # ---------------------------------------------------------------------------
@@ -140,7 +139,9 @@ def test_write_json_creates_parent_dirs_and_writes_pretty_json(tmp_path: Path) -
 
 
 def test_backup_file_noop_when_source_missing(tmp_path: Path) -> None:
-    installer.backup_file(tmp_path / "missing", "20260101-000000", dry_run=False, backup=True)
+    installer.backup_file(
+        tmp_path / "missing", "20260101-000000", dry_run=False, backup=True
+    )
 
     assert list(tmp_path.iterdir()) == []
 
@@ -299,7 +300,9 @@ def test_upsert_mcp_servers_config_raises_when_container_key_not_object(
     tmp_path: Path,
 ) -> None:
     path = tmp_path / "settings.json"
-    path.write_text(json.dumps({"mcpServers": ["not", "an", "object"]}), encoding="utf-8")
+    path.write_text(
+        json.dumps({"mcpServers": ["not", "an", "object"]}), encoding="utf-8"
+    )
 
     with pytest.raises(SystemExit, match="has non-object mcpServers"):
         installer.upsert_mcp_servers_config(
@@ -318,7 +321,13 @@ def test_upsert_mcp_servers_config_raises_when_container_key_not_object(
 
 
 def _claude_desktop_config_path(home: Path) -> Path:
-    return home / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json"
+    return (
+        home
+        / "Library"
+        / "Application Support"
+        / "Claude"
+        / "claude_desktop_config.json"
+    )
 
 
 def test_install_claude_desktop_writes_config_under_home(
@@ -342,7 +351,9 @@ def test_validate_claude_desktop_true_when_config_matches(
     config = {"command": "/usr/bin/env", "args": ["gpc"], "cwd": "/repo"}
     path = _claude_desktop_config_path(tmp_path)
     path.parent.mkdir(parents=True)
-    path.write_text(json.dumps({"mcpServers": {installer.SERVER_NAME: config}}), encoding="utf-8")
+    path.write_text(
+        json.dumps({"mcpServers": {installer.SERVER_NAME: config}}), encoding="utf-8"
+    )
 
     assert installer.validate_claude_desktop(config) is True
 
@@ -363,7 +374,9 @@ def test_validate_claude_desktop_false_when_missing(
 def test_validate_json_mcp_config_true_when_matching(tmp_path: Path) -> None:
     path = tmp_path / "settings.json"
     config = {"command": "/usr/bin/env", "args": ["gpc"], "cwd": "/repo"}
-    path.write_text(json.dumps({"mcpServers": {installer.SERVER_NAME: config}}), encoding="utf-8")
+    path.write_text(
+        json.dumps({"mcpServers": {installer.SERVER_NAME: config}}), encoding="utf-8"
+    )
 
     assert (
         installer.validate_json_mcp_config(path, config, container_key="mcpServers")
@@ -391,7 +404,9 @@ def test_validate_json_mcp_config_false_on_invalid_json(tmp_path: Path, capsys) 
     path.write_text("{broken", encoding="utf-8")
 
     assert (
-        installer.validate_json_mcp_config(path, {"command": "x"}, container_key="mcpServers")
+        installer.validate_json_mcp_config(
+            path, {"command": "x"}, container_key="mcpServers"
+        )
         is False
     )
     assert "not valid JSON" in capsys.readouterr().out
@@ -415,7 +430,9 @@ def test_install_codex_removes_then_adds_server(
     )
 
     config = installer.server_config("codex")
-    installer.install_codex(config, timestamp="20260101-000000", dry_run=False, backup=True)
+    installer.install_codex(
+        config, timestamp="20260101-000000", dry_run=False, backup=True
+    )
 
     assert calls[0] == ["codex", "mcp", "remove", installer.SERVER_NAME]
     assert calls[1][:4] == ["codex", "mcp", "add", installer.SERVER_NAME]
@@ -443,9 +460,7 @@ def test_install_claude_code_backs_up_two_files_and_adds_user_scope(
     )
 
     assert (tmp_path / ".claude.json.gpc-backup-20260101-000000").exists()
-    assert (
-        tmp_path / ".claude" / "settings.json.gpc-backup-20260101-000000"
-    ).exists()
+    assert (tmp_path / ".claude" / "settings.json.gpc-backup-20260101-000000").exists()
     assert calls[1][:5] == ["claude", "mcp", "add", "--scope", "user"]
 
 
@@ -481,7 +496,9 @@ def test_install_gemini_writes_under_dot_gemini_settings(
     monkeypatch.setattr(installer.Path, "home", lambda: tmp_path)
     config = installer.server_config("gemini")
 
-    installer.install_gemini(config, timestamp="20260101-000000", dry_run=False, backup=True)
+    installer.install_gemini(
+        config, timestamp="20260101-000000", dry_run=False, backup=True
+    )
 
     path = tmp_path / ".gemini" / "settings.json"
     data = json.loads(path.read_text(encoding="utf-8"))
@@ -509,7 +526,9 @@ def test_install_copilot_writes_stdio_shaped_config_under_servers_key(
     monkeypatch.setattr(installer.Path, "home", lambda: tmp_path)
     config = installer.server_config("copilot")
 
-    installer.install_copilot(config, timestamp="20260101-000000", dry_run=False, backup=True)
+    installer.install_copilot(
+        config, timestamp="20260101-000000", dry_run=False, backup=True
+    )
 
     path = tmp_path / "Library" / "Application Support" / "Code" / "User" / "mcp.json"
     data = json.loads(path.read_text(encoding="utf-8"))
@@ -609,11 +628,11 @@ def test_validate_installation_runs_smoke_test_and_dispatches_per_client(
     monkeypatch.setattr(installer, "run", fake_run)
     monkeypatch.setattr(installer, "validate_cli_output", lambda _cmd: True)
     monkeypatch.setattr(installer, "validate_claude_desktop", lambda _cfg: True)
-    monkeypatch.setattr(
-        installer, "validate_json_mcp_config", lambda *_a, **_k: True
-    )
+    monkeypatch.setattr(installer, "validate_json_mcp_config", lambda *_a, **_k: True)
 
-    ok = installer.validate_installation(list(installer.SUPPORTED_CLIENTS), skip_smoke=False)
+    ok = installer.validate_installation(
+        list(installer.SUPPORTED_CLIENTS), skip_smoke=False
+    )
 
     assert ok is True
     assert run_calls  # smoke test invoked
@@ -624,9 +643,11 @@ def test_validate_installation_skips_smoke_when_requested(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        installer, "run", lambda *a, **k: (_ for _ in ()).throw(
+        installer,
+        "run",
+        lambda *a, **k: (_ for _ in ()).throw(
             AssertionError("run() should not be called")
-        )
+        ),
     )
     monkeypatch.setattr(installer, "validate_cli_output", lambda _cmd: True)
 
@@ -641,7 +662,9 @@ def test_validate_installation_false_when_any_client_fails(
     monkeypatch.setattr(
         installer,
         "run",
-        lambda *a, **k: installer.RunResult(returncode=0, output="mcp_smoke_test=passed"),
+        lambda *a, **k: installer.RunResult(
+            returncode=0, output="mcp_smoke_test=passed"
+        ),
     )
     monkeypatch.setattr(installer, "validate_cli_output", lambda _cmd: False)
 
@@ -662,7 +685,9 @@ def test_main_dry_run_skips_validation(
     monkeypatch.setattr(installer, "validate_server_paths", lambda _cfg: None)
     install_calls: list[str] = []
     monkeypatch.setattr(
-        installer, "install_client", lambda client, *a, **k: install_calls.append(client)
+        installer,
+        "install_client",
+        lambda client, *a, **k: install_calls.append(client),
     )
     monkeypatch.setattr(
         installer,
@@ -680,7 +705,9 @@ def test_main_validate_only_skips_install_client(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        installer.sys, "argv", ["install_mcp_clients.py", "--validate-only", "--clients", "codex"]
+        installer.sys,
+        "argv",
+        ["install_mcp_clients.py", "--validate-only", "--clients", "codex"],
     )
     monkeypatch.setattr(installer, "validate_server_paths", lambda _cfg: None)
     monkeypatch.setattr(

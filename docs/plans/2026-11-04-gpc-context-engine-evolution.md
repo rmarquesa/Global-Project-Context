@@ -135,6 +135,31 @@ No hosted multi-tenant service, billing, autonomous code editing, automatic PR
 approval or production-service mutation. No inferred Augment retrieval internals
 or unmeasured performance-parity claims.
 
+## Validation correction discovered during OrbStack testing
+
+The historical pytest totals above passed, but the default suite was not wholly
+isolated: four pre-existing tests used live Neo4j, and one also appended synthetic
+`consolidation-demo` graph-bridge metric rows to local Postgres. The live validation
+guard detected two such rows; indexed content and decisions were unchanged.
+Those tests now run only with explicit integration selection and in the CI
+integration job; their unrelated telemetry observer is isolated. Do not interpret the historical totals as
+proof that no local services were contacted.
+
+Real PostgreSQL testing also found four older metrics/log tables missing from
+full-reset ordering. The reset inventory now includes them, and a regression
+checks every table declared by the migrations and child-before-parent ordering.
+All destructive reset checks run only against an ownership-guarded temporary
+database, never the existing `gpc` database.
+
+After these corrections, the default suite passed **713 tests, with four
+integration tests deselected**, while all service endpoints were overridden to
+unavailable loopback ports. Ruff/Black also passed the entire original push range
+(53 Python files), including previously unpushed commits, and Mypy/Compose checks
+passed. The legacy `embedding` fixture header is accepted by both YAML loaders;
+real PostgreSQL upgrade, reset/reapply, lexical SQL and decision lifecycle checks
+passed 75 assertions in the ownership-guarded temporary database. A protected
+backup was successfully restored before any real-schema promotion.
+
 ## Product references
 
 - https://docs.augmentcode.com/context-services/mcp/overview.md

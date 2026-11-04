@@ -31,6 +31,10 @@ class ResetReport:
 
 GPC_TABLES = (
     # Order matters — child tables first so FKs don't block drops.
+    "gpc_drift_signals",
+    "gpc_token_savings_samples",
+    "gpc_mcp_calls",
+    "gpc_self_metrics",
     "gpc_project_sources",
     "gpc_sources",
     "gpc_project_aliases",

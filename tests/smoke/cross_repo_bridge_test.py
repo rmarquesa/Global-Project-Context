@@ -23,7 +23,6 @@ from gpc.cross_repo import (
 )
 from gpc.graph import neo4j_driver
 
-
 TEST_PROJECT_SLUG = "gpc_smoke_bridge"
 
 
@@ -261,9 +260,7 @@ def _count_bridges(rule: str | None = None) -> int:
     query += "RETURN count(r) AS c"
     with neo4j_driver() as driver:
         with driver.session() as session:
-            record = session.run(
-                query, slug=TEST_PROJECT_SLUG, rule=rule
-            ).single()
+            record = session.run(query, slug=TEST_PROJECT_SLUG, rule=rule).single()
     return int(record["c"]) if record else 0
 
 
@@ -312,7 +309,9 @@ def main() -> None:
         assert _package_bridge_confidence() == ("EXTRACTED", 1.0)
         assert _count_bridges(RULE_SAME_SOURCE_FILE) == 1
         assert _count_bridges(RULE_SAME_CODE_SYMBOL) == 1
-        assert _count_bridges(RULE_SAME_GENERIC_SYMBOL) == 0, "generic rule must not write without opt-in"
+        assert (
+            _count_bridges(RULE_SAME_GENERIC_SYMBOL) == 0
+        ), "generic rule must not write without opt-in"
 
         # 2. Explicit include of generic rule — AMBIGUOUS bridge shows up.
         stats = build_bridges(
@@ -341,7 +340,9 @@ def main() -> None:
         _seed_second_project()
         try:
             build_bridges(f"{TEST_PROJECT_SLUG}_other", clear_existing=True)
-            assert _count_bridges() == 0, "bridges in test project must not appear from a different project run"
+            assert (
+                _count_bridges() == 0
+            ), "bridges in test project must not appear from a different project run"
         finally:
             _cleanup_second_project()
 

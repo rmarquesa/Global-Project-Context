@@ -60,9 +60,12 @@ target-version = "py310"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-# Smoke tests require live Postgres/Qdrant/Neo4j/Ollama; exclude them from the
-# default (CI) run. Invoke them explicitly with `pytest tests/smoke`.
-addopts = "--ignore=tests/smoke"
+# Live service tests run only in the disposable-service integration CI job.
+# Override addopts explicitly when selecting integration or smoke tests.
+addopts = "--ignore=tests/smoke -m 'not integration'"
+markers = [
+    "integration: requires disposable backing services (excluded by default)",
+]
 
 [tool.mypy]
 python_version = "3.10"

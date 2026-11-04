@@ -73,14 +73,16 @@ def _wait_for_repo_visibility(
     last_count = 0
 
     while True:
-        last_count = _graphify_repo_node_count(project_slug=project_slug, repo_slug=repo_slug)
+        last_count = _graphify_repo_node_count(
+            project_slug=project_slug, repo_slug=repo_slug
+        )
         observed_at = datetime.now(timezone.utc)
         if last_count >= expected_min_nodes:
             return last_count, observed_at
         if time.monotonic() >= deadline:
             raise TimeoutError(
-                'Timed out waiting for synced Graphify data to become queryable '
-                f'for {project_slug}:{repo_slug}; last observed node_count={last_count}.'
+                "Timed out waiting for synced Graphify data to become queryable "
+                f"for {project_slug}:{repo_slug}; last observed node_count={last_count}."
             )
         time.sleep(poll_interval_seconds)
 
@@ -103,6 +105,6 @@ def _graphify_repo_node_count(*, project_slug: str, repo_slug: str) -> int:
                 """,
                 project_slug=project_slug,
                 repo_slug=repo_slug,
-                repo_id=f'{project_slug}:{repo_slug}',
+                repo_id=f"{project_slug}:{repo_slug}",
             ).single()
-    return int(record['node_count']) if record else 0
+    return int(record["node_count"]) if record else 0

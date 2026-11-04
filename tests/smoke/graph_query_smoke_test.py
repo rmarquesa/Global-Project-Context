@@ -19,19 +19,48 @@ from contextlib import contextmanager
 from gpc.graph import neo4j_driver
 from gpc.graph_query import graph_neighbors, graph_path, graph_summary
 
-
 TEST_PROJECT_SLUG = "gpc_smoke_graph_query"
 NEIGHBOUR_SLUG = "gpc_smoke_graph_query_other"
 
 
 SEED_NODES = [
     # repo alpha
-    {"repo": "alpha", "id": "alpha_main", "label": "main()", "source_file": "src/main.js", "file_type": "code"},
-    {"repo": "alpha", "id": "alpha_auth", "label": "authenticate()", "source_file": "src/auth.js", "file_type": "code"},
-    {"repo": "alpha", "id": "alpha_db", "label": "getDatabase()", "source_file": "src/db.js", "file_type": "code"},
+    {
+        "repo": "alpha",
+        "id": "alpha_main",
+        "label": "main()",
+        "source_file": "src/main.js",
+        "file_type": "code",
+    },
+    {
+        "repo": "alpha",
+        "id": "alpha_auth",
+        "label": "authenticate()",
+        "source_file": "src/auth.js",
+        "file_type": "code",
+    },
+    {
+        "repo": "alpha",
+        "id": "alpha_db",
+        "label": "getDatabase()",
+        "source_file": "src/db.js",
+        "file_type": "code",
+    },
     # repo beta
-    {"repo": "beta", "id": "beta_main", "label": "main()", "source_file": "src/main.js", "file_type": "code"},
-    {"repo": "beta", "id": "beta_auth", "label": "authenticate()", "source_file": "src/auth.js", "file_type": "code"},
+    {
+        "repo": "beta",
+        "id": "beta_main",
+        "label": "main()",
+        "source_file": "src/main.js",
+        "file_type": "code",
+    },
+    {
+        "repo": "beta",
+        "id": "beta_auth",
+        "label": "authenticate()",
+        "source_file": "src/auth.js",
+        "file_type": "code",
+    },
 ]
 
 
@@ -76,7 +105,9 @@ def _seed(slug: str) -> None:
                         r.updated_at=datetime(), r.root_path='/tmp/'+$repo
                     MERGE (p)-[:HAS_REPO]->(r)
                     """,
-                    slug=slug, rid=f"{slug}:{repo}", repo=repo,
+                    slug=slug,
+                    rid=f"{slug}:{repo}",
+                    repo=repo,
                 )
             for n in SEED_NODES:
                 session.run(
@@ -92,8 +123,12 @@ def _seed(slug: str) -> None:
                     """,
                     rid=f"{slug}:{n['repo']}",
                     id=_qid(slug, n["repo"], n["id"]),
-                    slug=slug, repo=n["repo"], sid=n["id"],
-                    label=n["label"], ftype=n["file_type"], src=n["source_file"],
+                    slug=slug,
+                    repo=n["repo"],
+                    sid=n["id"],
+                    label=n["label"],
+                    ftype=n["file_type"],
+                    src=n["source_file"],
                 )
             for i, e in enumerate(SEED_GRAPHIFY_EDGES):
                 # Map src/tgt id to (slug, repo, sid) — assume same repo for both
@@ -125,7 +160,9 @@ def _seed(slug: str) -> None:
                     """,
                     a_id=_qid(slug, src_node["repo"], e["src"]),
                     b_id=_qid(slug, tgt_node["repo"], e["tgt"]),
-                    rule=e["rule"], conf=e["confidence"], score=e["confidence_score"],
+                    rule=e["rule"],
+                    conf=e["confidence"],
+                    score=e["confidence_score"],
                     slug=slug,
                 )
             session.run(
@@ -143,8 +180,10 @@ def _seed(slug: str) -> None:
                 MERGE (a)-[r:GPC_RELATION {id: $rid}]->(b)
                 SET r.confidence = 0.75
                 """,
-                pid=f"{slug}:gpc-project", slug=slug,
-                source=f"{slug}:entity:source", target=f"{slug}:entity:target",
+                pid=f"{slug}:gpc-project",
+                slug=slug,
+                source=f"{slug}:entity:source",
+                target=f"{slug}:entity:target",
                 rid=f"{slug}:gpc-relation",
             )
 
@@ -192,7 +231,10 @@ def main() -> None:
         )
         labels = {n["label"] for n in result["neighbors"]}
         assert result["start"]["id"] == alpha_auth_id, result
-        assert labels == {"main()", "getDatabase()"}, f"EXTRACTED neighbors wrong: {labels}"
+        assert labels == {
+            "main()",
+            "getDatabase()",
+        }, f"EXTRACTED neighbors wrong: {labels}"
 
         # 2. Neighbors — INFERRED includes the cross-repo bridge.
         result = graph_neighbors(
@@ -227,7 +269,8 @@ def main() -> None:
         )
         assert default_gpc_result["neighbors"] == [], default_gpc_result
         result = graph_neighbors(
-            TEST_PROJECT_SLUG, gpc_source,
+            TEST_PROJECT_SLUG,
+            gpc_source,
             min_confidence="INFERRED",
             relations=["GPC_RELATION"],
         )
@@ -248,9 +291,12 @@ def main() -> None:
         }, result
         default_result = graph_neighbors(TEST_PROJECT_SLUG, TEST_PROJECT_SLUG)
         assert default_result["neighbors"] == [], default_result
-        assert graph_neighbors(
-            NEIGHBOUR_SLUG, gpc_source, relations=["GPC_RELATION"]
-        )["neighbors"] == []
+        assert (
+            graph_neighbors(NEIGHBOUR_SLUG, gpc_source, relations=["GPC_RELATION"])[
+                "neighbors"
+            ]
+            == []
+        )
 
         # 5. Summary — returns repos, gods, and bridges.
         summary = graph_summary(TEST_PROJECT_SLUG)

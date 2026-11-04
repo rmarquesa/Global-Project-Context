@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from gpc.cross_project_audit import build_cross_project_audit, render_cross_project_audit_markdown
+from gpc.cross_project_audit import (
+    build_cross_project_audit,
+    render_cross_project_audit_markdown,
+)
 
 
 def test_build_cross_project_audit_flags_critical_gaps() -> None:
@@ -13,12 +16,20 @@ def test_build_cross_project_audit_flags_critical_gaps() -> None:
                 "aliases": ["alpha"],
                 "embedding_model": "nomic-embed-text:latest",
                 "repos": [
-                    {"slug": "alpha-api", "root_path": "/Users/me/Github/alpha/.worktrees/api"},
-                    {"slug": "alpha-web", "root_path": "/Users/me/Github/alpha/.worktrees/web"},
+                    {
+                        "slug": "alpha-api",
+                        "root_path": "/Users/me/Github/alpha/.worktrees/api",
+                    },
+                    {
+                        "slug": "alpha-web",
+                        "root_path": "/Users/me/Github/alpha/.worktrees/web",
+                    },
                 ],
                 "graph_summary": {
                     "found": True,
-                    "god_nodes": [{"label": "AlphaService", "repo": "alpha-api", "degree": 11}],
+                    "god_nodes": [
+                        {"label": "AlphaService", "repo": "alpha-api", "degree": 11}
+                    ],
                     "communities": [
                         {
                             "community": 1,
@@ -28,7 +39,11 @@ def test_build_cross_project_audit_flags_critical_gaps() -> None:
                         }
                     ],
                     "cross_repo_bridges": [
-                        {"rule": "same_code_symbol", "confidence": "INFERRED", "count": 4}
+                        {
+                            "rule": "same_code_symbol",
+                            "confidence": "INFERRED",
+                            "count": 4,
+                        }
                     ],
                 },
             },
@@ -49,7 +64,9 @@ def test_build_cross_project_audit_flags_critical_gaps() -> None:
                 "repos": [{"slug": "gamma_api", "root_path": "/srv/gamma_api"}],
                 "graph_summary": {
                     "found": True,
-                    "god_nodes": [{"label": "GammaService", "repo": "gamma_api", "degree": 7}],
+                    "god_nodes": [
+                        {"label": "GammaService", "repo": "gamma_api", "degree": 7}
+                    ],
                     "communities": [],
                     "cross_repo_bridges": [],
                 },
@@ -59,11 +76,22 @@ def test_build_cross_project_audit_flags_critical_gaps() -> None:
     )
 
     assert audit["projects_audited"] == 3
-    assert any("beta_project" in gap and "no Graphify projection" in gap for gap in audit["critical_gaps"])
-    assert any("gamma-project" in gap and "text-embedding-3-large" in gap for gap in audit["critical_gaps"])
-    assert any("beta_project" in gap and "kebab-case" in gap for gap in audit["observations"])
+    assert any(
+        "beta_project" in gap and "no Graphify projection" in gap
+        for gap in audit["critical_gaps"]
+    )
+    assert any(
+        "gamma-project" in gap and "text-embedding-3-large" in gap
+        for gap in audit["critical_gaps"]
+    )
+    assert any(
+        "beta_project" in gap and "kebab-case" in gap for gap in audit["observations"]
+    )
     assert audit["overview"]["critical_gap_count"] == len(audit["critical_gaps"])
-    assert any(project["slug"] == "gamma-project" and project["gaps"] for project in audit["projects"])
+    assert any(
+        project["slug"] == "gamma-project" and project["gaps"]
+        for project in audit["projects"]
+    )
 
 
 def test_render_cross_project_audit_markdown_includes_expected_sections() -> None:
@@ -83,7 +111,11 @@ def test_render_cross_project_audit_markdown_includes_expected_sections() -> Non
                 "graph_summary": {
                     "found": True,
                     "god_nodes": [
-                        {"label": "graph_summary()", "repo": "gpc-local-verify", "degree": 9}
+                        {
+                            "label": "graph_summary()",
+                            "repo": "gpc-local-verify",
+                            "degree": 9,
+                        }
                     ],
                     "communities": [
                         {
@@ -94,7 +126,11 @@ def test_render_cross_project_audit_markdown_includes_expected_sections() -> Non
                         }
                     ],
                     "cross_repo_bridges": [
-                        {"rule": "same_source_file", "confidence": "INFERRED", "count": 2}
+                        {
+                            "rule": "same_source_file",
+                            "confidence": "INFERRED",
+                            "count": 2,
+                        }
                     ],
                 },
             }

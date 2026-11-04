@@ -31,7 +31,6 @@ from gpc.graph_query import graph_neighbors, graph_path, graph_summary
 from gpc.registry import register_project, register_repo
 from gpc.search import compose_project_context, search_project_context
 
-
 ALPHA_SLUG = "isolation-alpha"
 BETA_SLUG = "isolation-beta"
 FIXTURE_ROOT = Path(__file__).resolve().parent / ".cross-project-isolation-fixture"
@@ -101,7 +100,9 @@ def _ensure_fixture_dirs() -> None:
     for slug, spec in PROJECTS.items():
         repo_dir = _repo_dir(slug)
         repo_dir.mkdir(parents=True, exist_ok=True)
-        (_project_dir(slug) / spec["relative_path"]).parent.mkdir(parents=True, exist_ok=True)
+        (_project_dir(slug) / spec["relative_path"]).parent.mkdir(
+            parents=True, exist_ok=True
+        )
         (_project_dir(slug) / spec["relative_path"]).write_text(
             f"# synthetic fixture for {slug}\n{spec['entry_text']}\n{spec['secret_text']}\n",
             encoding="utf-8",
@@ -158,7 +159,12 @@ def _seed_registry_and_storage(client: QdrantClient) -> None:
 
     for slug, spec in PROJECTS.items():
         project = register_project(_project_dir(slug), slug=slug, name=spec["name"])
-        repo = register_repo(project["slug"], _repo_dir(slug), slug=spec["repo_slug"], name=spec["repo_slug"])
+        repo = register_repo(
+            project["slug"],
+            _repo_dir(slug),
+            slug=spec["repo_slug"],
+            name=spec["repo_slug"],
+        )
         project_rows[slug] = project
         repo_rows[slug] = repo
         content = f"{spec['entry_text']}\n\n{spec['secret_text']}"
@@ -363,9 +369,15 @@ def _assert_search_and_context_isolation() -> None:
     )
     assert alpha_project["slug"] == ALPHA_SLUG, alpha_project
     assert alpha_results, "alpha search returned no results"
-    assert any(PROJECTS[ALPHA_SLUG]["secret"] in result.content for result in alpha_results), alpha_results
-    assert all(PROJECTS[BETA_SLUG]["secret"] not in result.content for result in alpha_results), alpha_results
-    assert {result.repo_slug for result in alpha_results} == {PROJECTS[ALPHA_SLUG]["repo_slug"]}, alpha_results
+    assert any(
+        PROJECTS[ALPHA_SLUG]["secret"] in result.content for result in alpha_results
+    ), alpha_results
+    assert all(
+        PROJECTS[BETA_SLUG]["secret"] not in result.content for result in alpha_results
+    ), alpha_results
+    assert {result.repo_slug for result in alpha_results} == {
+        PROJECTS[ALPHA_SLUG]["repo_slug"]
+    }, alpha_results
 
     beta_project, beta_results = search_project_context(
         "BETA_SECRET_TOKEN isolation beta",
@@ -374,9 +386,15 @@ def _assert_search_and_context_isolation() -> None:
     )
     assert beta_project["slug"] == BETA_SLUG, beta_project
     assert beta_results, "beta search returned no results"
-    assert any(PROJECTS[BETA_SLUG]["secret"] in result.content for result in beta_results), beta_results
-    assert all(PROJECTS[ALPHA_SLUG]["secret"] not in result.content for result in beta_results), beta_results
-    assert {result.repo_slug for result in beta_results} == {PROJECTS[BETA_SLUG]["repo_slug"]}, beta_results
+    assert any(
+        PROJECTS[BETA_SLUG]["secret"] in result.content for result in beta_results
+    ), beta_results
+    assert all(
+        PROJECTS[ALPHA_SLUG]["secret"] not in result.content for result in beta_results
+    ), beta_results
+    assert {result.repo_slug for result in beta_results} == {
+        PROJECTS[BETA_SLUG]["repo_slug"]
+    }, beta_results
 
     _, _, alpha_context = compose_project_context(
         "ALPHA_SECRET_TOKEN isolation alpha",

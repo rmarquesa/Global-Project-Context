@@ -228,8 +228,15 @@ http://127.0.0.1:8765/mcp
 Or via Docker Compose:
 
 ```bash
-docker compose --profile http up -d gpc-mcp-http
+docker compose --profile http up -d --build gpc-mcp-http
 ```
+
+The image copies source code; rebuilding is required after code updates, not just
+restarting the old container. Compose connects HTTP to Postgres, Qdrant and Neo4j
+by internal service names, while publishing the MCP endpoint on loopback only.
+The Ollama host service must already be running with the configured model.
+When reusing an existing installation, preserve its Compose project name and
+named volumes rather than accidentally creating another empty stack.
 
 > ⚠️ **Do not bind `gpc-mcp-http` to a public interface** without putting an
 > authenticating reverse proxy in front. The MCP server is read-only but still

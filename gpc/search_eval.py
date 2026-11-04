@@ -329,8 +329,16 @@ def load_search_eval_fixture(path: str | Path) -> list[SearchEvalCase]:
 def _cases_from_payload(payload: Any) -> list[SearchEvalCase]:
     if payload is None:
         return []
-    if not isinstance(payload, dict) or set(payload) != {"queries"}:
-        raise ValueError("fixture must contain only a queries list")
+    if (
+        not isinstance(payload, dict)
+        or "queries" not in payload
+        or set(payload) - {"queries", "embedding"}
+    ):
+        raise ValueError(
+            "fixture requires queries and optional embedding metadata only"
+        )
+    if "embedding" in payload:
+        _validate_fixture_embedding(payload["embedding"])
     items = payload["queries"]
     if items is None:
         return []
@@ -356,17 +364,49 @@ def _cases_from_payload(payload: Any) -> list[SearchEvalCase]:
     return cases
 
 
+def _validate_fixture_embedding(metadata: Any) -> None:
+    """Accept legacy fixture annotations, never runtime configuration overrides."""
+    if not isinstance(metadata, dict) or set(metadata) - {
+        "provider",
+        "model",
+        "dimensions",
+    }:
+        raise ValueError(
+            "fixture embedding must map provider/model/dimensions metadata"
+        )
+    for field in ("provider", "model"):
+        if field in metadata and (
+            not isinstance(metadata[field], str) or not metadata[field].strip()
+        ):
+            raise ValueError(f"fixture embedding {field} must be a nonempty string")
+    if "dimensions" in metadata:
+        value = metadata["dimensions"]
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            raise ValueError(
+                "fixture embedding dimensions must be a nonnegative integer"
+            )
+
+
+def _fixture_embedding_scalar(field: str, value: str) -> Any:
+    if field == "dimensions" and value.lstrip("+-").isdigit():
+        return int(value)
+    return _fixture_value(value)
+
+
 def _parse_simple_fixture(text: str) -> list[SearchEvalCase]:
     """Parse the documented fixture subset without an optional YAML dependency.
 
-    Supports block cases, scalar strings, and inline/block lists. Other YAML
-    features are rejected rather than silently changing evaluation labels.
+    Supports block cases, scalar strings, inline/block lists, and the legacy
+    embedding metadata mapping. Other YAML features are rejected rather than
+    silently changing evaluation labels.
     """
     items: list[dict[str, Any]] = []
     current: dict[str, Any] | None = None
     list_field: str | None = None
-    root_seen = False
+    payload: dict[str, Any] = {}
+    section: str | None = None
     inline_empty_root = False
+    inline_embedding = False
     for raw in text.splitlines():
         line = raw.strip()
         if not line or line.startswith("#"):
@@ -374,12 +414,48 @@ def _parse_simple_fixture(text: str) -> list[SearchEvalCase]:
         indent = len(raw) - len(raw.lstrip(" "))
         if "\t" in raw:
             raise ValueError("fixture indentation must use spaces")
-        if not root_seen:
-            if indent != 0 or line not in {"queries:", "queries: []"}:
-                raise ValueError("fixture must start with queries:")
-            root_seen = True
-            inline_empty_root = line == "queries: []"
+        if indent == 0:
+            field, separator, value = line.partition(":")
+            value = value.strip()
+            if (
+                not separator
+                or field not in {"queries", "embedding"}
+                or field in payload
+            ):
+                raise ValueError("fixture permits queries and optional embedding only")
+            section = field
+            if field == "queries":
+                if value not in {"", "[]"}:
+                    raise ValueError("fixture queries must be a block list or []")
+                payload[field] = items
+                inline_empty_root = value == "[]"
+            else:
+                if value and not (value.startswith("{") and value.endswith("}")):
+                    raise ValueError("fixture embedding must be a mapping")
+                inline_embedding = bool(value)
+                metadata = {}
+                for part in _fixture_parts(value[1:-1]) if value else []:
+                    key, separator, scalar = part.partition(":")
+                    key = _fixture_scalar(key.strip())
+                    if not separator or not isinstance(key, str) or key in metadata:
+                        raise ValueError("invalid fixture embedding mapping")
+                    metadata[key] = _fixture_embedding_scalar(key, scalar.strip())
+                payload[field] = metadata
+            current, list_field = None, None
             continue
+        if section == "embedding":
+            field, separator, value = line.partition(":")
+            if (
+                inline_embedding
+                or indent != 2
+                or not separator
+                or field in payload[section]
+            ):
+                raise ValueError("invalid fixture embedding mapping")
+            payload[section][field] = _fixture_embedding_scalar(field, value.strip())
+            continue
+        if section != "queries":
+            raise ValueError("fixture must start with queries or embedding")
         if inline_empty_root:
             raise ValueError("unexpected content after queries: []")
         if line.startswith("- query:"):
@@ -403,7 +479,7 @@ def _parse_simple_fixture(text: str) -> list[SearchEvalCase]:
             current[list_field].append(_fixture_scalar(line[2:].strip()))
         else:
             raise ValueError(f"unsupported fixture syntax: {line}")
-    return _cases_from_payload({"queries": items})
+    return _cases_from_payload(payload or None)
 
 
 def _fixture_value(value: str) -> Any:
@@ -411,8 +487,12 @@ def _fixture_value(value: str) -> Any:
         return _fixture_scalar(value)
     if not value.endswith("]"):
         raise ValueError("unterminated fixture list")
-    parts, start, quote = [], 1, None
-    for i in range(1, len(value) - 1):
+    return [_fixture_scalar(part) for part in _fixture_parts(value[1:-1])]
+
+
+def _fixture_parts(value: str) -> list[str]:
+    parts, start, quote = [], 0, None
+    for i in range(len(value)):
         char = value[i]
         if char in {"'", '"'}:
             if quote is None:
@@ -420,13 +500,13 @@ def _fixture_value(value: str) -> Any:
             elif quote == char and (quote == "'" or value[i - 1] != "\\"):
                 quote = None
         elif char == "," and quote is None:
-            parts.append(_fixture_scalar(value[start:i].strip()))
+            parts.append(value[start:i].strip())
             start = i + 1
     if quote:
         raise ValueError("unterminated fixture string")
-    tail = value[start:-1].strip()
+    tail = value[start:].strip()
     if tail:
-        parts.append(_fixture_scalar(tail))
+        parts.append(tail)
     return parts
 
 

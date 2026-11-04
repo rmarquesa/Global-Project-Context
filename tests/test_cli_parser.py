@@ -64,7 +64,9 @@ def test_metrics_collect_all_parser_supports_json_output() -> None:
 
 
 def test_metrics_collect_parser_accepts_scheduled_source() -> None:
-    args = parse_args(["metrics", "collect", "--project", "gpc", "--source", "scheduled"])
+    args = parse_args(
+        ["metrics", "collect", "--project", "gpc", "--source", "scheduled"]
+    )
 
     assert args.source == "scheduled"
     assert args.func.__name__ == "cmd_metrics_collect"

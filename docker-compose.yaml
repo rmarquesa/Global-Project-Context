@@ -67,10 +67,15 @@ services:
         condition: service_healthy
       qdrant:
         condition: service_started
+      neo4j:
+        condition: service_healthy
     environment:
       GPC_POSTGRES_DSN: postgresql://${GPC_POSTGRES_USER:-gpc}:${GPC_POSTGRES_PASSWORD:-gpcpass}@postgres:5432/${GPC_POSTGRES_DB:-gpc}
       GPC_QDRANT_HOST: qdrant
       GPC_QDRANT_PORT: 6333
+      GPC_NEO4J_URI: bolt://neo4j:7687
+      GPC_NEO4J_USER: neo4j
+      GPC_NEO4J_PASSWORD: ${GPC_NEO4J_PASSWORD:-gpcneo4jpass}
       GPC_OLLAMA_HOST: ${GPC_OLLAMA_HOST:-http://host.docker.internal:11434}
       GPC_OLLAMA_EMBEDDING_MODEL: ${GPC_OLLAMA_EMBEDDING_MODEL:-nomic-embed-text:latest}
       GPC_MCP_HTTP_HOST: 0.0.0.0

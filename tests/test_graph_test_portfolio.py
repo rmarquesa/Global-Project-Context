@@ -5,6 +5,8 @@ from pathlib import Path
 import shutil
 import uuid
 
+import pytest
+
 from gpc.graph import neo4j_driver
 from gpc.graph_test_portfolio import (
     _is_under_test_roots,
@@ -13,7 +15,6 @@ from gpc.graph_test_portfolio import (
 )
 from gpc.graphify_sync import sync_graphify_to_neo4j
 
-TEST_PROJECT_SLUG = "test-portfolio-demo"
 REPO_SLUG = "demo-repo"
 
 
@@ -30,7 +31,9 @@ def test_is_under_test_roots_matches_prefix_only() -> None:
     assert _is_under_test_roots("gpc/search.py", ("tests",)) is False
 
 
+@pytest.mark.integration
 def test_generate_test_portfolio_report_flags_uncovered_external_call() -> None:
+    project_slug = f"test-portfolio-{uuid.uuid4().hex}"
     repo_root = _make_synthetic_repo(
         nodes=[
             {
@@ -58,16 +61,16 @@ def test_generate_test_portfolio_report_flags_uncovered_external_call() -> None:
     )
 
     try:
-        _cleanup_graphify_project(TEST_PROJECT_SLUG)
+        _cleanup_graphify_project(project_slug)
         sync_graphify_to_neo4j(
             repo_root,
-            project_slug=TEST_PROJECT_SLUG,
+            project_slug=project_slug,
             repo_slug=REPO_SLUG,
             clear_repo=True,
         )
 
         report = generate_test_portfolio_report(
-            TEST_PROJECT_SLUG,
+            project_slug,
             test_roots=("tests",),
             repo_root=repo_root,
             min_god_node_degree=10,
@@ -78,11 +81,15 @@ def test_generate_test_portfolio_report_flags_uncovered_external_call() -> None:
         gap_files = {gap["source_file"] for gap in report["gaps"]}
         assert "gpc/uncovered_module.py" in gap_files
     finally:
-        _cleanup_graphify_project(TEST_PROJECT_SLUG)
+        _cleanup_graphify_project(project_slug)
         shutil.rmtree(repo_root, ignore_errors=True)
 
 
-def test_generate_test_portfolio_report_treats_referenced_module_as_covered(tmp_path) -> None:
+@pytest.mark.integration
+def test_generate_test_portfolio_report_treats_referenced_module_as_covered(
+    tmp_path,
+) -> None:
+    project_slug = f"test-portfolio-{uuid.uuid4().hex}"
     repo_root = _make_synthetic_repo(
         nodes=[
             {
@@ -116,16 +123,16 @@ def test_generate_test_portfolio_report_treats_referenced_module_as_covered(tmp_
     )
 
     try:
-        _cleanup_graphify_project(TEST_PROJECT_SLUG)
+        _cleanup_graphify_project(project_slug)
         sync_graphify_to_neo4j(
             repo_root,
-            project_slug=TEST_PROJECT_SLUG,
+            project_slug=project_slug,
             repo_slug=REPO_SLUG,
             clear_repo=True,
         )
 
         report = generate_test_portfolio_report(
-            TEST_PROJECT_SLUG,
+            project_slug,
             test_roots=("tests",),
             repo_root=tmp_path,
             min_god_node_degree=10,
@@ -136,7 +143,7 @@ def test_generate_test_portfolio_report_treats_referenced_module_as_covered(tmp_
         assert "gpc/covered_module.py" not in gap_files
         assert report["external_calls_covered"] >= 1
     finally:
-        _cleanup_graphify_project(TEST_PROJECT_SLUG)
+        _cleanup_graphify_project(project_slug)
         shutil.rmtree(repo_root, ignore_errors=True)
 
 

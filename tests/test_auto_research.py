@@ -7,7 +7,9 @@ import pytest
 from gpc.auto_research import generate_proposal
 
 
-def test_generate_proposal_renders_highest_severity_signal_and_metrics(tmp_path) -> None:
+def test_generate_proposal_renders_highest_severity_signal_and_metrics(
+    tmp_path,
+) -> None:
     result = generate_proposal(
         project_slug="demo-project",
         output_dir=tmp_path,
@@ -49,7 +51,9 @@ def test_generate_proposal_renders_highest_severity_signal_and_metrics(tmp_path)
     assert "Community count rose." in content
     assert "| 2026-09-17T12:00:00Z | scheduled | 42 | 9 | 3 |" in content
     assert "Topological focus for review: `ImportantModule`." in content
-    assert "never edits source code, creates a pull request, or merges changes" in content
+    assert (
+        "never edits source code, creates a pull request, or merges changes" in content
+    )
 
 
 def test_generate_proposal_records_missing_drift_as_baseline(tmp_path) -> None:

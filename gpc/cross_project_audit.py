@@ -1,6 +1,6 @@
-from __future__ import annotations
-
 """Cross-project audit report generation for registered GPC projects."""
+
+from __future__ import annotations
 
 from collections import Counter
 from datetime import date
@@ -21,7 +21,9 @@ def generate_cross_project_audit(
 ) -> dict[str, Any]:
     """Collect registered-project graph summaries and write a markdown audit."""
 
-    audit = build_cross_project_audit(_collect_project_records(), audit_date=date.today())
+    audit = build_cross_project_audit(
+        _collect_project_records(), audit_date=date.today()
+    )
     path = _resolve_output_path(output_path, audit["audit_date"])
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(audit["markdown"], encoding="utf-8")
@@ -73,7 +75,9 @@ def render_cross_project_audit_markdown(audit: dict[str, Any]) -> str:
     projects = audit["projects"]
     critical_gaps = audit["critical_gaps"]
     observations = audit["observations"]
-    expected = audit["overview"].get("expected_embedding_model", EXPECTED_EMBEDDING_MODEL)
+    expected = audit["overview"].get(
+        "expected_embedding_model", EXPECTED_EMBEDDING_MODEL
+    )
 
     lines = [
         f"# GPC Cross-Project Audit — {audit['audit_date']}",
@@ -144,13 +148,17 @@ def render_cross_project_audit_markdown(audit: dict[str, Any]) -> str:
         if project.get("graph_note"):
             lines.append(f"- Graph note: {project['graph_note']}")
         if project["repo_slugs"]:
-            lines.append(f"- Repo slugs: {', '.join(f'`{slug}`' for slug in project['repo_slugs'])}")
+            lines.append(
+                f"- Repo slugs: {', '.join(f'`{slug}`' for slug in project['repo_slugs'])}"
+            )
         lines.extend(["", "#### God Nodes", ""])
         if project["god_nodes"]:
-            lines.extend([
-                "| Label | Repo | Degree |",
-                "|---|---|---:|",
-            ])
+            lines.extend(
+                [
+                    "| Label | Repo | Degree |",
+                    "|---|---|---:|",
+                ]
+            )
             for node in project["god_nodes"]:
                 lines.append(
                     f"| `{node.get('label', 'unknown')}` | {node.get('repo', 'unknown')} | {node.get('degree', 0)} |"
@@ -160,14 +168,19 @@ def render_cross_project_audit_markdown(audit: dict[str, Any]) -> str:
 
         lines.extend(["", "#### Communities", ""])
         if project["communities"]:
-            lines.extend([
-                "| Community | Nodes | Repos | Sample labels |",
-                "|---|---:|---:|---|",
-            ])
+            lines.extend(
+                [
+                    "| Community | Nodes | Repos | Sample labels |",
+                    "|---|---:|---:|---|",
+                ]
+            )
             for community in project["communities"]:
-                labels = ", ".join(
-                    f"`{label}`" for label in (community.get("sample_labels") or [])
-                ) or "—"
+                labels = (
+                    ", ".join(
+                        f"`{label}`" for label in (community.get("sample_labels") or [])
+                    )
+                    or "—"
+                )
                 lines.append(
                     f"| {community.get('community', 'n/a')} | {community.get('node_count', 0)} | {community.get('repo_count', 0)} | {labels} |"
                 )
@@ -175,7 +188,15 @@ def render_cross_project_audit_markdown(audit: dict[str, Any]) -> str:
             lines.append("No community data available.")
 
         if project["cross_repo_bridges"]:
-            lines.extend(["", "#### Cross-Repo Bridges", "", "| Rule | Confidence | Count |", "|---|---|---:|"])
+            lines.extend(
+                [
+                    "",
+                    "#### Cross-Repo Bridges",
+                    "",
+                    "| Rule | Confidence | Count |",
+                    "|---|---|---:|",
+                ]
+            )
             for bridge in project["cross_repo_bridges"]:
                 lines.append(
                     f"| {bridge.get('rule', 'unknown')} | {bridge.get('confidence', 'unknown')} | {bridge.get('count', 0)} |"
@@ -274,13 +295,19 @@ def _prepare_project_record(record: dict[str, Any]) -> dict[str, Any]:
 
 def _build_overview(projects: list[dict[str, Any]]) -> dict[str, Any]:
     models = [
-        project["embedding_model"] for project in projects if project.get("embedding_model")
+        project["embedding_model"]
+        for project in projects
+        if project.get("embedding_model")
     ]
     majority = Counter(models).most_common(1)[0][0] if models else None
     return {
         "registered_projects": len(projects),
-        "graph_projects_found": sum(1 for project in projects if project["graph_found"]),
-        "projects_without_graph": sum(1 for project in projects if not project["graph_found"]),
+        "graph_projects_found": sum(
+            1 for project in projects if project["graph_found"]
+        ),
+        "projects_without_graph": sum(
+            1 for project in projects if not project["graph_found"]
+        ),
         "repo_count": sum(project["repo_count"] for project in projects),
         "majority_embedding_model": majority,
         "expected_embedding_model": EXPECTED_EMBEDDING_MODEL,
@@ -292,7 +319,9 @@ def _collect_gaps(projects: list[dict[str, Any]]) -> tuple[list[str], list[str]]
     critical: list[str] = []
     observations: list[str] = []
     models = [
-        project["embedding_model"] for project in projects if project.get("embedding_model")
+        project["embedding_model"]
+        for project in projects
+        if project.get("embedding_model")
     ]
     majority = Counter(models).most_common(1)[0][0] if models else None
 
@@ -322,7 +351,9 @@ def _collect_gaps(projects: list[dict[str, Any]]) -> tuple[list[str], list[str]]
             )
             project["gaps"].append("Project slug diverges from kebab-case.")
 
-        if project["repo_slug_style"].startswith("mixed") or project["repo_slug_style"] not in {
+        if project["repo_slug_style"].startswith("mixed") or project[
+            "repo_slug_style"
+        ] not in {
             "kebab-case",
             "none",
         }:
@@ -389,28 +420,36 @@ def _summarize_slug_styles(values: list[str]) -> str:
     styles = Counter(_classify_slug(value) for value in values)
     if len(styles) == 1:
         return next(iter(styles))
-    return "mixed(" + ", ".join(f"{style}={count}" for style, count in sorted(styles.items())) + ")"
+    return (
+        "mixed("
+        + ", ".join(f"{style}={count}" for style, count in sorted(styles.items()))
+        + ")"
+    )
 
 
 def _classify_root_path(value: str) -> str:
     if not value:
         return "missing"
-    normalized = value.replace('\\', '/')
-    if '/.gpc/projects/' in normalized:
-        return 'synthetic-project-root'
-    if '/.worktrees/' in normalized:
-        return 'git-worktree'
-    if '/Github/' in normalized or '/GitHub/' in normalized:
-        return 'workspace-checkout'
-    if normalized.startswith('/'):
-        return 'absolute-path'
-    return 'relative-or-other'
+    normalized = value.replace("\\", "/")
+    if "/.gpc/projects/" in normalized:
+        return "synthetic-project-root"
+    if "/.worktrees/" in normalized:
+        return "git-worktree"
+    if "/Github/" in normalized or "/GitHub/" in normalized:
+        return "workspace-checkout"
+    if normalized.startswith("/"):
+        return "absolute-path"
+    return "relative-or-other"
 
 
 def _summarize_root_styles(values: list[str]) -> str:
     if not values:
-        return 'none'
+        return "none"
     styles = Counter(values)
     if len(styles) == 1:
         return next(iter(styles))
-    return 'mixed(' + ', '.join(f'{style}={count}' for style, count in sorted(styles.items())) + ')'
+    return (
+        "mixed("
+        + ", ".join(f"{style}={count}" for style, count in sorted(styles.items()))
+        + ")"
+    )

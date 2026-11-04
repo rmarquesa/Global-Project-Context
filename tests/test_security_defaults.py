@@ -39,6 +39,11 @@ def test_every_compose_published_port_is_loopback_including_optional_profiles() 
     assert "      GPC_MCP_HTTP_HOST: 0.0.0.0\n" in compose
     assert "      GPC_QDRANT_HOST: qdrant\n" in compose
     assert "@postgres:5432/" in compose
+    http = compose.split("  gpc-mcp-http:\n", 1)[1].split("  grafana:\n", 1)[0]
+    assert "      GPC_NEO4J_URI: bolt://neo4j:7687\n" in http
+    assert "      GPC_NEO4J_USER: neo4j\n" in http
+    assert "      GPC_NEO4J_PASSWORD: ${GPC_NEO4J_PASSWORD:-gpcneo4jpass}\n" in http
+    assert "      neo4j:\n        condition: service_healthy\n" in http
 
 
 @pytest.mark.parametrize("offset", [199_900, 199_990, 200_100, 511_900])

@@ -24,10 +24,13 @@ def main() -> None:
             "--json",
         ],
         cwd=ROOT,
-        check=True,
+        check=False,
         capture_output=True,
         text=True,
     )
+    assert (
+        result.returncode == 0
+    ), f"eval-search exited {result.returncode}: {result.stderr}"
     payload = json.loads(result.stdout)
     assert payload["embedding"]["provider"] == "ollama", payload
     assert payload["embedding"]["model"] == "nomic-embed-text:latest", payload

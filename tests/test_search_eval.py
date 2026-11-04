@@ -448,3 +448,126 @@ def test_malformed_fixtures_fail_clearly_with_both_parsers(tmp_path, text):
     path = fixture_file(tmp_path, text)
     with pytest.raises(ValueError):
         evaluation.load_search_eval_fixture(path)
+
+
+LEGACY_FIXTURE = Path(__file__).parent / "fixtures" / "search_eval_gpc.yml"
+
+
+def force_fallback(monkeypatch):
+    original = builtins.__import__
+
+    def no_yaml(name, *args, **kwargs):
+        if name == "yaml":
+            raise ImportError("optional dependency unavailable")
+        return original(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", no_yaml)
+
+
+def test_shipped_legacy_yml_has_four_identical_cases_with_both_parsers(monkeypatch):
+    pytest.importorskip("yaml")
+    normal = evaluation.load_search_eval_fixture(LEGACY_FIXTURE)
+    force_fallback(monkeypatch)
+    fallback = evaluation.load_search_eval_fixture(LEGACY_FIXTURE)
+    assert normal == fallback
+    assert len(fallback) == 4
+    assert all(case.expected_paths for case in fallback)
+    assert fallback[0].query == "how does MCP stay read-only?"
+    assert fallback[-1].expected_paths[-1] == "gpc/drift.py"
+
+
+@pytest.mark.parametrize("fallback", [False, True])
+@pytest.mark.parametrize(
+    "runtime_embedding",
+    [
+        {"provider": "ollama", "model": "nomic-embed-text:latest", "dimensions": 768},
+        {"provider": "runtime-provider", "model": "runtime-model", "dimensions": 32},
+    ],
+)
+def test_cli_shipped_fixture_json_uses_runtime_embedding_metadata(
+    monkeypatch, capsys, fallback, runtime_embedding
+):
+    from gpc.cli import cmd_eval_search
+
+    if fallback:
+        force_fallback(monkeypatch)
+    monkeypatch.setattr(evaluation, "EMBEDDING_PROVIDER", runtime_embedding["provider"])
+    monkeypatch.setattr(
+        evaluation, "active_embedding_model", lambda: runtime_embedding["model"]
+    )
+    monkeypatch.setattr(
+        evaluation, "embedding_dimension", lambda: runtime_embedding["dimensions"]
+    )
+    cases = evaluation.load_search_eval_fixture(LEGACY_FIXTURE)
+    calls = []
+
+    def search(query, **kwargs):
+        calls.append((query, kwargs))
+        case = next(case for case in cases if case.query == query)
+        return None, [found("gpc", path) for path in case.expected_paths]
+
+    monkeypatch.setattr(evaluation, "search_project_context", search)
+    args = SimpleNamespace(
+        project="gpc",
+        fixture=LEGACY_FIXTURE,
+        k=5,
+        mode="semantic",
+        task="general",
+        compare=False,
+        json=True,
+    )
+    assert cmd_eval_search(args) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["summary"]["queries"] == 4
+    assert payload["summary"]["recall_at_k"] == 1
+    assert payload["embedding"] == runtime_embedding
+    assert [query for query, _ in calls] == [case.query for case in cases]
+    assert all(
+        kwargs["project"] == "gpc" and kwargs["limit"] == 5 for _, kwargs in calls
+    )
+
+
+@pytest.mark.parametrize("fallback", [False, True])
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        "embedding: not-a-mapping",
+        "embedding: []",
+        "embedding: null",
+        "embedding: {}\n  provider: ollama",
+        "embedding:\n  unknown: value",
+        "embedding:\n  provider: []",
+        "embedding:\n  model: null",
+        "embedding:\n  dimensions: -1",
+        "embedding:\n  dimensions: 1.5",
+        "embedding:\n  dimensions: true",
+        'embedding:\n  dimensions: "768"',
+    ],
+)
+def test_malformed_embedding_metadata_fails_clearly(
+    tmp_path, monkeypatch, fallback, metadata
+):
+    if fallback:
+        force_fallback(monkeypatch)
+    path = fixture_file(tmp_path, metadata + "\nqueries: []\n")
+    with pytest.raises(ValueError):
+        evaluation.load_search_eval_fixture(path)
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        "embedding: {}",
+        "embedding:\n  dimensions: 0",
+        "embedding: {provider: custom, model: custom:latest, dimensions: 768}",
+        "embedding:\n  provider: custom\n  model: 'a, b'\n  dimensions: 768",
+    ],
+)
+def test_optional_embedding_fields_and_inline_mapping_parser_parity(metadata):
+    yaml = pytest.importorskip("yaml")
+    text = metadata + '\nqueries:\n  - query: "q"\n    expected_paths: []\n'
+    assert (
+        evaluation._parse_simple_fixture(text)
+        == evaluation._cases_from_payload(yaml.safe_load(text))
+        == [SearchEvalCase("q", [])]
+    )

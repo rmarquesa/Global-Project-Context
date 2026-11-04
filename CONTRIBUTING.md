@@ -125,16 +125,31 @@ fi
 
 ## Testing
 
-GPC has two test layers:
+GPC separates unit checks from service-dependent checks:
 
 - **Unit tests** (`tests/test_*.py`) — hermetic, no live services. Run with
   `./venv/bin/python -m pytest`. `pyproject.toml` excludes `tests/smoke` from the
-  default run via `addopts`, and CI runs this suite in the `quality` job. Keep
+  default run and excludes the `integration` marker via `addopts`; CI runs this
+  suite in the `quality` job. Keep
   new unit tests free of network/database access (mock or pass values in).
 - **Smoke tests** (`tests/smoke/`) — end-to-end against live Postgres, Qdrant,
   Ollama and Neo4j. Run with `./scripts/run_smoke_tests.sh` (or
-  `./venv/bin/python -m pytest tests/smoke` for the pytest-style ones). CI runs
+  `./venv/bin/python -m pytest -o addopts='' tests/smoke` for pytest-style ones). CI runs
   these in a dedicated `integration` job that boots the services in containers.
+- **Marked integration tests** — four graph/freshness/portfolio tests under
+  `tests/test_*.py` also require live Neo4j. They are excluded from normal pytest
+  and run explicitly in the CI integration job:
+
+  ```bash
+  ./venv/bin/python -m pytest -o addopts='' -m integration \
+    tests/test_graphify_freshness.py tests/test_graph_test_portfolio.py \
+    tests/test_multi_repo_graph_path.py
+  ```
+
+Run service-dependent tests only against disposable services/databases. Some
+create and delete synthetic graph scopes or persist telemetry; a filename under
+`tests/` is not proof of isolation. Never point the broad smoke wrapper at a
+valuable local installation without reviewing every test's mutations.
 
 | Test | Validates |
 |---|---|
