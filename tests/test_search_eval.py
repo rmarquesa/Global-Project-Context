@@ -571,3 +571,207 @@ def test_optional_embedding_fields_and_inline_mapping_parser_parity(metadata):
         == evaluation._cases_from_payload(yaml.safe_load(text))
         == [SearchEvalCase("q", [])]
     )
+
+
+def diagnostic_snapshot():
+    from gpc.eval_corpus import EvalCorpusSnapshot
+
+    return EvalCorpusSnapshot(
+        "p",
+        "project",
+        (("1", "one"), ("2", "two")),
+        (
+            ("one", "indexed.py", "hash", True),
+            ("one", "empty.py", "hash2", False),
+            ("two", "second.py", "hash3", True),
+        ),
+    )
+
+
+def test_diagnostics_distinguish_rank_miss_absence_without_changing_metrics(
+    tmp_path, monkeypatch
+):
+    fixture = fixture_file(
+        tmp_path,
+        """queries:
+  - query: "q"
+    expected_paths: ["indexed.py", "absent.py", "empty.py", "indexed.py"]
+""",
+    )
+    monkeypatch.setattr(
+        evaluation, "load_eval_corpus", lambda *args: diagnostic_snapshot()
+    )
+    monkeypatch.setattr(
+        evaluation, "search_project_context", lambda *a, **kw: (None, [])
+    )
+    monkeypatch.setattr(evaluation.time, "perf_counter", lambda: 0)
+    normal = evaluation.run_search_eval("p", fixture)
+    diagnostic = evaluation.run_search_eval("p", fixture, diagnose=True)
+    assert normal.summary == diagnostic.summary
+    assert normal.summary["expected_paths"] == 3
+    assert "diagnostics" not in normal.to_dict()
+    assert "diagnostics" not in normal.results[0].to_dict()
+    row = diagnostic.to_dict()["results"][0]
+    assert row["missing_expected_paths"] == ["indexed.py", "absent.py", "empty.py"]
+    assert row["diagnostics"]["indexed_but_not_retrieved_paths"] == ["indexed.py"]
+    assert row["diagnostics"]["not_indexed_expected_paths"] == ["absent.py", "empty.py"]
+    assert diagnostic.diagnostics["coverage"]["file_without_chunks"] == 1
+
+
+def test_compare_all_reuses_fixture_bytes_snapshot_and_scoped_case_indices(
+    tmp_path, monkeypatch
+):
+    fixture = fixture_file(
+        tmp_path,
+        """queries:
+  - query: "same"
+    expected_paths: ["indexed.py"]
+    repo: "one"
+  - query: "same"
+    expected_paths: ["second.py"]
+    repo: "two"
+""",
+    )
+    import hashlib
+
+    fixture_hash = hashlib.sha256(fixture.read_bytes()).hexdigest()
+    reads, snapshots, calls = [], [], []
+    original = evaluation._load_fixture_snapshot
+
+    def load(path):
+        reads.append(path)
+        return original(path)
+
+    def snapshot(project, cases):
+        snapshots.append(cases)
+        # Changing the file after parsing must not change cases or its fingerprint.
+        fixture.write_text("queries: []\n")
+        return diagnostic_snapshot()
+
+    def search(query, **kwargs):
+        calls.append((query, kwargs))
+        hit = (kwargs["mode"] == "hybrid" and kwargs["repo"] == "one") or (
+            kwargs["mode"] == "lexical" and kwargs["repo"] == "two"
+        )
+        path = "indexed.py" if kwargs["repo"] == "one" else "second.py"
+        return None, [found(kwargs["repo"], path)] if hit else []
+
+    monkeypatch.setattr(evaluation, "_load_fixture_snapshot", load)
+    monkeypatch.setattr(evaluation, "load_eval_corpus", snapshot)
+    monkeypatch.setattr(evaluation, "search_project_context", search)
+    result = evaluation.compare_search_eval(
+        "p", fixture, diagnose=True, include_lexical=True
+    )
+    assert len(reads) == len(snapshots) == 1
+    assert [kw["mode"] for _, kw in calls] == [
+        "semantic",
+        "semantic",
+        "hybrid",
+        "hybrid",
+        "lexical",
+        "lexical",
+    ]
+    assert (
+        result["delta"]["recall_at_k"] == result["lexical_delta"]["recall_at_k"] == 0.5
+    )
+    for name in ("baseline", "candidate", "lexical"):
+        assert result[name]["diagnostics"]["snapshot"]["fixture_sha256"] == fixture_hash
+        assert [r["diagnostics"]["case_index"] for r in result[name]["results"]] == [
+            0,
+            1,
+        ]
+    assert result["candidate"]["results"][1]["diagnostics"][
+        "indexed_but_not_retrieved_paths"
+    ] == ["second.py"]
+    assert result["lexical"]["results"][0]["diagnostics"][
+        "indexed_but_not_retrieved_paths"
+    ] == ["indexed.py"]
+    assert "not a benchmark" in result["comparison_note"]
+    json.dumps(result, allow_nan=False)
+
+
+def test_lexical_diagnostics_never_probes_ollama_and_default_never_loads_metadata(
+    tmp_path, monkeypatch
+):
+    fixture = fixture_file(
+        tmp_path, 'queries:\n  - query: "q"\n    expected_paths: ["indexed.py"]\n'
+    )
+    monkeypatch.setattr(
+        evaluation, "search_project_context", lambda *a, **kw: (None, [])
+    )
+    monkeypatch.setattr(evaluation, "active_embedding_model", forbidden)
+    monkeypatch.setattr(evaluation, "embedding_dimension", forbidden)
+    monkeypatch.setattr(evaluation, "load_eval_corpus", forbidden)
+    normal = evaluation.run_search_eval("p", fixture, mode="lexical")
+    assert "diagnostics" not in normal.to_dict()
+    monkeypatch.setattr(
+        evaluation, "load_eval_corpus", lambda *args: diagnostic_snapshot()
+    )
+    report = evaluation.run_search_eval("p", fixture, mode="lexical", diagnose=True)
+    assert report.provider == "not_applicable" and report.dimensions == 0
+    assert report.diagnostics["coverage"]["indexed"] == 1
+
+
+@pytest.mark.parametrize("options", [{"k": 0}, {"k": 101}, {"task": "unknown"}])
+def test_diagnostic_invalid_options_fail_before_metadata_or_embedding(
+    monkeypatch, options
+):
+    for name in (
+        "_load_fixture_snapshot",
+        "load_eval_corpus",
+        "search_project_context",
+        "active_embedding_model",
+        "embedding_dimension",
+    ):
+        monkeypatch.setattr(evaluation, name, forbidden)
+    with pytest.raises(ValueError):
+        evaluation.run_search_eval("p", "unused", diagnose=True, **options)
+    with pytest.raises(ValueError):
+        evaluation.compare_search_eval(
+            "p", "unused", diagnose=True, include_lexical=True, **options
+        )
+
+
+def test_diagnostic_metadata_failure_is_not_silently_a_rank_miss(tmp_path, monkeypatch):
+    fixture = fixture_file(
+        tmp_path, 'queries:\n  - query: "q"\n    expected_paths: ["indexed.py"]\n'
+    )
+
+    def fail(*args):
+        raise RuntimeError("metadata unavailable")
+
+    monkeypatch.setattr(evaluation, "load_eval_corpus", fail)
+    monkeypatch.setattr(evaluation, "search_project_context", forbidden)
+    monkeypatch.setattr(evaluation, "embedding_dimension", forbidden)
+    with pytest.raises(RuntimeError, match="metadata unavailable"):
+        evaluation.run_search_eval("p", fixture, diagnose=True)
+    with pytest.raises(RuntimeError, match="metadata unavailable"):
+        evaluation.compare_search_eval(
+            "p", fixture, diagnose=True, include_lexical=True
+        )
+
+
+def test_fixture_fingerprint_tracks_exact_parsed_bytes(tmp_path):
+    fixture = fixture_file(tmp_path, "queries: []\n")
+    first_cases, first_hash = evaluation._load_fixture_snapshot(fixture)
+    assert evaluation._load_fixture_snapshot(fixture) == (first_cases, first_hash)
+    fixture.write_bytes(b"queries: []\r\n")
+    cases, digest = evaluation._load_fixture_snapshot(fixture)
+    assert cases == first_cases and digest != first_hash
+
+
+def test_default_comparison_retains_old_keys_and_never_loads_metadata(
+    tmp_path, monkeypatch
+):
+    fixture = fixture_file(
+        tmp_path, 'queries:\n  - query: "q"\n    expected_paths: ["indexed.py"]\n'
+    )
+    monkeypatch.setattr(evaluation, "load_eval_corpus", forbidden)
+    monkeypatch.setattr(
+        evaluation, "search_project_context", lambda *a, **kw: (None, [])
+    )
+    comparison = evaluation.compare_search_eval("p", fixture)
+    assert set(comparison) == {"baseline", "candidate", "delta"}
+    for name in ("baseline", "candidate"):
+        assert "diagnostics" not in comparison[name]
+        assert "diagnostics" not in comparison[name]["results"][0]

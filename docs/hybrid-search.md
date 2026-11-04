@@ -76,6 +76,18 @@ gpc eval-search --project my-project --fixture my-eval.yaml --k 5 --compare --js
 gpc eval-search --project my-project --fixture my-eval.yaml --mode lexical --json
 ```
 
+To compare all three modes and inspect corpus availability, use the opt-in
+diagnostics described in the [retrieval evaluation guide](retrieval-evaluation.md):
+
+```bash
+gpc eval-search --project my-project --fixture my-eval.yaml --k 5 --compare-all --diagnose --json
+```
+
+`--compare` retains the existing semantic-versus-hybrid comparison. Diagnostics
+do not remove absent sources from metric denominators: they help distinguish
+coverage problems from retrieval misses. PostgreSQL chunk availability alone
+does not prove vector completeness or freshness against disk.
+
 Reports include recall, query hit rate, reciprocal rank, nDCG and latency. Review
 individual misses as well as aggregates. Use repository-qualified expected paths
 (`api:src/auth.py`) when a path alone is ambiguous. A fixture's repo/task filters
@@ -104,8 +116,9 @@ fixture syntax and rejects unsupported constructs. Keep fixtures simple like the
 example above; YAML anchors and custom tags are not required.
 
 The included synthetic fixture and unit tests validate behavior and metric
-arithmetic; they are **not** a measured production quality improvement. Live-store
-SQL performance, edit-to-search freshness, representative relevance and answer
-correctness remain separate validation work. Fewer returned characters alone do
-not demonstrate a better answer. Existing context-pack character budgets and
-citation contracts still apply.
+arithmetic; they are **not** a measured production quality improvement. Selected
+local SQL and watcher checks passed (see the [OrbStack validation report](plans/2026-11-04-orbstack-validation.md));
+large-corpus performance, representative relevance and answer correctness remain
+separate validation work. Fewer returned characters alone do not demonstrate a
+better answer. Existing context-pack character budgets and citation contracts
+still apply.

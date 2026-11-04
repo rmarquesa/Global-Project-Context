@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
+import hashlib
 import json
 import math
 from pathlib import Path
@@ -9,6 +10,7 @@ from typing import Any, Iterable
 
 from gpc.config import EMBEDDING_PROVIDER
 from gpc.embeddings import active_embedding_model, embedding_dimension
+from gpc.eval_corpus import AVAILABILITY_STATUSES, EvalCorpusSnapshot, load_eval_corpus
 from gpc.search import SEARCH_MODES, SEARCH_TASKS, search_project_context
 
 
@@ -39,9 +41,13 @@ class SearchEvalResult:
     latency_ms: float = 0.0
     repo: str | list[str] | None = None
     task: str = "general"
+    diagnostics: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        payload = asdict(self)
+        if self.diagnostics is None:
+            payload.pop("diagnostics")
+        return payload
 
 
 @dataclass(frozen=True)
@@ -53,6 +59,7 @@ class SearchEvalReport:
     results: list[SearchEvalResult]
     mode: str = "semantic"
     task: str = "general"
+    diagnostics: dict[str, Any] | None = None
 
     @property
     def summary(self) -> dict[str, Any]:
@@ -92,7 +99,7 @@ class SearchEvalReport:
         }
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "k": self.k,
             "mode": self.mode,
             "task": self.task,
@@ -105,6 +112,9 @@ class SearchEvalReport:
             "summary": self.summary,
             "results": [r.to_dict() for r in self.results],
         }
+        if self.diagnostics is not None:
+            payload["diagnostics"] = self.diagnostics
+        return payload
 
 
 def _identity(path: str, repo: str | None = None) -> str:
@@ -242,15 +252,37 @@ def run_search_eval(
     k: int = 5,
     mode: str = "semantic",
     task: str = "general",
+    diagnose: bool = False,
 ) -> SearchEvalReport:
     """Measure fixture retrieval; case repo/task override the run defaults."""
     _validate_options(k, mode, task)
+    if diagnose:
+        if k > 100:
+            raise ValueError("diagnostic retrieval k must be between 1 and 100")
+        cases, fingerprint = _load_fixture_snapshot(fixture_path)
+        snapshot = load_eval_corpus(project, cases)
+        return _run_cases(
+            project,
+            cases,
+            k=k,
+            mode=mode,
+            task=task,
+            snapshot=snapshot,
+            fixture_sha256=fingerprint,
+        )
     cases = load_search_eval_fixture(fixture_path)
     return _run_cases(project, cases, k=k, mode=mode, task=task)
 
 
 def _run_cases(
-    project: str, cases: list[SearchEvalCase], *, k: int, mode: str, task: str
+    project: str,
+    cases: list[SearchEvalCase],
+    *,
+    k: int,
+    mode: str,
+    task: str,
+    snapshot: EvalCorpusSnapshot | None = None,
+    fixture_sha256: str = "",
 ) -> SearchEvalReport:
     for case in cases:
         _validate_case(case)
@@ -284,20 +316,61 @@ def _run_cases(
         task=task,
         latency_by_query=latency,
     )
+    if snapshot is not None:
+        results = [
+            replace(
+                result,
+                diagnostics=snapshot.diagnose_case(
+                    case, result.missing_expected_paths, i
+                ),
+            )
+            for i, (case, result) in enumerate(zip(cases, report.results))
+        ]
+        report = replace(
+            report,
+            results=results,
+            diagnostics={
+                "snapshot": snapshot.to_dict(fixture_sha256),
+                "coverage": {
+                    status: sum(r.diagnostics["coverage"][status] for r in results)
+                    for status in AVAILABILITY_STATUSES
+                },
+            },
+        )
     return report
 
 
 def compare_search_eval(
-    project: str, fixture_path: str | Path, *, k: int = 5, task: str = "general"
+    project: str,
+    fixture_path: str | Path,
+    *,
+    k: int = 5,
+    task: str = "general",
+    diagnose: bool = False,
+    include_lexical: bool = False,
 ) -> dict[str, Any]:
     """Run the same fixture in semantic/hybrid order; deltas are candidate-baseline.
 
     These fixture-specific measurements are not evidence of production gains.
     """
     _validate_options(k, "semantic", task)
-    cases = load_search_eval_fixture(fixture_path)
-    baseline = _run_cases(project, cases, k=k, mode="semantic", task=task).to_dict()
-    candidate = _run_cases(project, cases, k=k, mode="hybrid", task=task).to_dict()
+    if diagnose and k > 100:
+        raise ValueError("diagnostic retrieval k must be between 1 and 100")
+    options = {}
+    if diagnose:
+        cases, fingerprint = _load_fixture_snapshot(fixture_path)
+        options = {
+            "snapshot": load_eval_corpus(project, cases),
+            "fixture_sha256": fingerprint,
+        }
+    else:
+        cases = load_search_eval_fixture(fixture_path)
+    baseline = _run_cases(
+        project, cases, k=k, mode="semantic", task=task, **options
+    ).to_dict()
+    candidate = _run_cases(
+        project, cases, k=k, mode="hybrid", task=task, **options
+    ).to_dict()
     metrics = (
         "recall_at_k",
         "query_hit_rate",
@@ -306,15 +379,38 @@ def compare_search_eval(
         "mean_latency_ms",
         "p95_latency_ms",
     )
-    return {
+    comparison = {
         "baseline": baseline,
         "candidate": candidate,
         "delta": {m: candidate["summary"][m] - baseline["summary"][m] for m in metrics},
     }
+    if include_lexical:
+        lexical = _run_cases(
+            project, cases, k=k, mode="lexical", task=task, **options
+        ).to_dict()
+        comparison.update(
+            {
+                "lexical": lexical,
+                "lexical_delta": {
+                    m: lexical["summary"][m] - baseline["summary"][m] for m in metrics
+                },
+                "comparison_note": "Fixed execution order: semantic, hybrid, lexical. Deltas are hybrid-semantic and lexical-semantic; fixture measurements are not a benchmark or evidence of production gains.",
+            }
+        )
+    return comparison
 
 
 def load_search_eval_fixture(path: str | Path) -> list[SearchEvalCase]:
     text = Path(path).read_text(encoding="utf-8")
+    return _parse_fixture_text(text)
+
+
+def _load_fixture_snapshot(path: str | Path) -> tuple[list[SearchEvalCase], str]:
+    data = Path(path).read_bytes()
+    return _parse_fixture_text(data.decode("utf-8")), hashlib.sha256(data).hexdigest()
+
+
+def _parse_fixture_text(text: str) -> list[SearchEvalCase]:
     try:
         import yaml  # type: ignore
     except ImportError:

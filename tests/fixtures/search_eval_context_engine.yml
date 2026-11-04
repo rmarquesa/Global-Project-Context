@@ -1,0 +1,68 @@
+queries:
+  - query: "When should search stay semantic, and how does opt-in hybrid fusion combine lexical and vector rankings?"
+    expected_paths:
+      - "gpc:gpc/search.py"
+      - "gpc:docs/hybrid-search.md"
+    repo: gpc
+    task: debug
+  - query: "How do I limit retrieval to the api repository without mixing another project's files?"
+    expected_paths:
+      - "gpc:gpc/search.py"
+      - "gpc:gpc/registry.py"
+    repo: gpc
+    task: debug
+  - query: "Como a indexação evita seguir symlinks e incluir arquivos que parecem conter segredos?"
+    expected_paths:
+      - "gpc:gpc/indexer.py"
+      - "gpc:SECURITY.md"
+    repo: gpc
+    task: review
+  - query: "How are missing vectors repaired for unchanged files without re-embedding the entire repository?"
+    expected_paths:
+      - "gpc:gpc/indexer.py"
+    repo: gpc
+    task: debug
+  - query: "Como o watcher combina debounce com um limite máximo e detecta troca de branch?"
+    expected_paths:
+      - "gpc:gpc/watcher.py"
+      - "gpc:docs/watcher.md"
+    repo: gpc
+    task: debug
+  - query: "What prevents two indexing processes from modifying the same repository at once?"
+    expected_paths:
+      - "gpc:gpc/index_lock.py"
+    repo: gpc
+    task: debug
+  - query: "Como uma decisão pendente é aprovada somente quando o hash da fonte continua atual?"
+    expected_paths:
+      - "gpc:gpc/decisions.py"
+      - "gpc:docs/decision-memory.md"
+    repo: gpc
+    task: review
+  - query: "What happens to an approved decision when its source file is deleted or its evidence becomes stale?"
+    expected_paths:
+      - "gpc:gpc/decisions.py"
+      - "gpc:docs/decision-memory.md"
+    repo: gpc
+    task: review
+  - query: "Como o context pack mantém o limite de tamanho e inclui citações para os trechos recuperados?"
+    expected_paths:
+      - "gpc:gpc/context_pack.py"
+      - "gpc:docs/hybrid-search.md"
+    repo: gpc
+    task: implement
+  - query: "Which ranking metrics does the legacy search evaluation calculate, and what do they measure?"
+    expected_paths:
+      - "gpc:gpc/search_eval.py"
+    repo: gpc
+    task: test
+  - query: "Como distinguir ferramentas MCP de leitura de conteúdo das métricas operacionais de uso?"
+    expected_paths:
+      - "gpc:gpc/mcp_server.py"
+    repo: gpc
+    task: review
+  - query: "Como o GPC resolve um alias de projeto para a identidade do projeto registrado?"
+    expected_paths:
+      - "gpc:gpc/registry.py"
+    repo: gpc
+    task: debug

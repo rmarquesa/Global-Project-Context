@@ -242,6 +242,16 @@ def build_parser() -> argparse.ArgumentParser:
     eval_mode.add_argument(
         "--compare", action="store_true", help="Compare semantic baseline with hybrid."
     )
+    eval_mode.add_argument(
+        "--compare-all",
+        action="store_true",
+        help="Compare semantic, hybrid and lexical.",
+    )
+    eval_search_parser.add_argument(
+        "--diagnose",
+        action="store_true",
+        help="Read fixture-scoped PostgreSQL availability metadata.",
+    )
     eval_search_parser.add_argument("--task", choices=SEARCH_TASKS, default="general")
     eval_search_parser.set_defaults(func=cmd_eval_search)
 
@@ -1109,17 +1119,51 @@ def cmd_token_savings(args: argparse.Namespace) -> int:
 def cmd_eval_search(args: argparse.Namespace) -> int:
     from gpc.search_eval import compare_search_eval, run_search_eval
 
-    if args.compare:
+    def print_diagnostics(row: dict) -> None:
+        if "diagnostics" not in row:
+            return
+        print(
+            "diagnostic_coverage "
+            + " ".join(f"{k}={v}" for k, v in row["diagnostics"]["coverage"].items())
+        )
+        for result in row["results"]:
+            diagnostic = result["diagnostics"]
+            issues = [
+                f"{label['path']}={label['status']}"
+                for label in diagnostic["expected_paths"]
+                if label["status"] != "indexed"
+            ]
+            issues.extend(
+                f"{path}=indexed_but_not_retrieved"
+                for path in diagnostic["indexed_but_not_retrieved_paths"]
+            )
+            if issues:
+                print(
+                    f"case={diagnostic['case_index']} query={result['query']!r} "
+                    + " ".join(issues)
+                )
+        for note in row["diagnostics"]["snapshot"]["notes"]:
+            print(f"diagnostic_note={note}")
+
+    options = {"diagnose": True} if getattr(args, "diagnose", False) else {}
+    compare_all = getattr(args, "compare_all", False)
+    if getattr(args, "compare", False) or compare_all:
         if args.mode != "semantic":
-            raise ValueError("--compare cannot be combined with --mode")
+            raise ValueError("--compare/--compare-all cannot be combined with --mode")
+        if compare_all:
+            options["include_lexical"] = True
         comparison = compare_search_eval(
-            args.project, args.fixture, k=args.k, task=args.task
+            args.project, args.fixture, k=args.k, task=args.task, **options
         )
         if args.json:
             print(json.dumps(comparison, indent=2))
         else:
             print(f"project={args.project} task={args.task} delta=hybrid-semantic")
-            for name in ("baseline", "candidate"):
+            for name in (
+                ("baseline", "candidate", "lexical")
+                if compare_all
+                else ("baseline", "candidate")
+            ):
                 row = comparison[name]
                 metrics = " ".join(
                     (
@@ -1130,16 +1174,26 @@ def cmd_eval_search(args: argparse.Namespace) -> int:
                     for key, value in row["summary"].items()
                 )
                 print(f"{name} mode={row['mode']} {metrics}")
+                print_diagnostics(row)
             print(
                 "delta "
                 + " ".join(
                     f"{key}={value:+.3f}" for key, value in comparison["delta"].items()
                 )
             )
+            if compare_all:
+                print(
+                    "lexical_delta "
+                    + " ".join(
+                        f"{key}={value:+.3f}"
+                        for key, value in comparison["lexical_delta"].items()
+                    )
+                )
+                print(comparison["comparison_note"])
         return 0
 
     report = run_search_eval(
-        args.project, args.fixture, k=args.k, mode=args.mode, task=args.task
+        args.project, args.fixture, k=args.k, mode=args.mode, task=args.task, **options
     )
     if args.json:
         print(json.dumps(report.to_dict(), indent=2))
@@ -1169,6 +1223,8 @@ def cmd_eval_search(args: argparse.Namespace) -> int:
             print(
                 f"{status} query={result.query!r} hits={result.hit_paths} missing={result.missing_expected_paths}"
             )
+        if options:
+            print_diagnostics(report.to_dict())
     return 0
 
 

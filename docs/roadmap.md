@@ -612,11 +612,16 @@ licenciamento.
 ### 4.5 Paridade competitiva com Augment (P1)
 
 - [x] Watcher opcional em primeiro plano, com polling, debounce, retry e
-      isolamento por worktree, além dos hooks de Git. Latência com serviços
-      reais continua pendente de medição; ver [watcher](watcher.md).
+      isolamento por worktree, além dos hooks de Git. Reconciliação validada
+      localmente com serviços isolados; latência representativa continua pendente
+      de medição. Ver [watcher](watcher.md).
 - [x] Busca híbrida (léxica + semântica), preferências explícitas por tarefa e
       comparação em `gpc eval-search` com recall, MRR, nDCG e latência. Ganhos de
       relevância em produção não foram estabelecidos; ver [busca híbrida](hybrid-search.md).
+- [x] Diagnóstico opcional de cobertura do índice e comparação dos três modos
+      com `eval-search --compare-all --diagnose`, sem alterar denominadores das
+      métricas. Fixture de desenvolvimento com 12 casos PT/EN e proveniência;
+      não é benchmark representativo. Ver [guia de avaliação](retrieval-evaluation.md).
 - [ ] Reranking aprendido e recuperação de símbolos via AST.
 - [x] Memória de decisões com captura, aprovação, invalidação, supersessão e
       evidência de fonte indexada. CLI/MCP, migrações e ciclo de vida validados
