@@ -189,6 +189,44 @@ for hybrid and 1→12 of 16 for lexical. **Natural Portuguese hybrid regressed f
 files remain. Weighted is therefore still opt-in; aggregate gains are not a
 production rollout recommendation.
 
+## Optional hybrid file diversity
+
+```bash
+gpc eval-search --project my-project --fixture diversity.yaml --k 5 --compare-all --lexical-strategy weighted --file-diversity one-per-file --analyze-candidates --json
+```
+
+`--file-diversity one-per-file` selects the first chunk from each repository-
+qualified file **after the existing hybrid ranking**, stopping at k. It works
+with either lexical strategy. It does not change RRF, scores, task preferences,
+candidate budgets or backend calls. If fewer than k unique files were retrieved,
+the output is short: there is no refill or padding. The default remains `none`.
+
+This option is hybrid-only. A single semantic/lexical run rejects it before
+services; `--compare`/`--compare-all` applies it only to the hybrid candidate.
+The Python search/evaluation APIs accept `file_diversity="one-per-file"`; MCP
+and ordinary search defaults are unchanged.
+
+Selection reports include `file_diversity`, `selection_policy_version` and a
+`selection_note`. With candidate analysis, nondefault selection uses capture
+**version 3**, retaining the complete preselection `ranked_candidates` and adding
+ordered `selected_chunk_ids` and `selected_paths`. Actual results need not be a
+prefix of that pool. Weighted v3 also retains weighted-policy metadata; captures
+without selection remain legacy v1 or weighted v2.
+
+Baseline metrics describe the selected output; pool coverage and offline caps
+still describe the same underlying candidates. File-level metrics favor removing
+duplicates: this cannot discard a file already present in the uncapped top-k,
+but it can discard complementary evidence from that file. Better file recall
+alone is not proof of better answers. See the
+[new-case fixture](diversity-retrieval-fixture.md) and
+[selection experiment](plans/2026-11-05-file-diversity.md) for review, validation
+and limits.
+
+On the new twelve-case fixture, one-per-file increased unique-file occupancy but
+did **not** increase hits: weighted hybrid stayed at 11/16 and legacy hybrid at
+8/16. Some rank metrics improved. The option remains experimental because
+file-label metrics do not measure the completeness of the retained evidence.
+
 Before optimizing ranking, have a reviewer inspect every expected path and
 rationale, then add held-out user queries with independently reviewed
 relevance judgments. In particular, no-answer correctness is not scored here:

@@ -260,6 +260,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Experimental weighted lexical policy (lexical/hybrid only); default legacy.",
     )
     eval_search_parser.add_argument(
+        "--file-diversity",
+        choices=("none", "one-per-file"),
+        default="none",
+        help="Optional hybrid-only post-fusion selection; one chunk per file, no backfill.",
+    )
+    eval_search_parser.add_argument(
         "--analyze-candidates",
         action="store_true",
         help="Capture content-free shortlists and replay offline file-diversity caps; implies --diagnose. Does not change default retrieval.",
@@ -1129,13 +1135,26 @@ def cmd_token_savings(args: argparse.Namespace) -> int:
 
 def cmd_eval_search(args: argparse.Namespace) -> int:
     from gpc.search_eval import compare_search_eval, run_search_eval
-    from gpc.retrieval import validate_lexical_strategy
+    from gpc.retrieval import validate_file_diversity, validate_lexical_strategy
 
     strategy = getattr(args, "lexical_strategy", "legacy")
+    diversity = getattr(args, "file_diversity", "none")
     comparing = getattr(args, "compare", False) or getattr(args, "compare_all", False)
     validate_lexical_strategy(strategy, "hybrid" if comparing else args.mode)
+    validate_file_diversity(diversity, "hybrid" if comparing else args.mode)
 
     def print_policy(row: dict) -> None:
+        if "selection_policy_version" in row:
+            short = sum(
+                len(result["result_paths"]) < row["k"] for result in row["results"]
+            )
+            count = sum(len(result["result_paths"]) for result in row["results"])
+            print(
+                f"file_diversity={row['file_diversity']} "
+                f"selection_policy_version={row['selection_policy_version']} "
+                f"result_count={count} short_results={short}"
+            )
+            print(row["selection_note"])
         if "lexical_policy_version" in row:
             print(
                 f"lexical_strategy={row['lexical_strategy']} "
@@ -1185,6 +1204,8 @@ def cmd_eval_search(args: argparse.Namespace) -> int:
     options = {"diagnose": True} if getattr(args, "diagnose", False) else {}
     if strategy != "legacy":
         options["lexical_strategy"] = strategy
+    if diversity != "none":
+        options["file_diversity"] = diversity
     if getattr(args, "analyze_candidates", False):
         options.update({"diagnose": True, "analyze_candidates": True})
     compare_all = getattr(args, "compare_all", False)
@@ -1242,7 +1263,7 @@ def cmd_eval_search(args: argparse.Namespace) -> int:
         print(json.dumps(report.to_dict(), indent=2))
     else:
         summary = report.summary
-        if strategy != "legacy":
+        if strategy != "legacy" or diversity != "none":
             print_policy(report.to_dict())
         print(
             f"project={args.project} queries={summary['queries']} "

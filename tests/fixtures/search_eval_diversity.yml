@@ -1,0 +1,65 @@
+queries:
+  - query: "How does GPC choose the embedding model and determine vector dimensions when none are configured?"
+    expected_paths:
+      - "gpc:gpc/embeddings.py"
+      - "gpc:gpc/config.py"
+    repo: gpc
+    task: debug
+  - query: "Como o GPC escolhe o modelo de embedding e determina as dimensões dos vetores quando não são configuradas?"
+    expected_paths:
+      - "gpc:gpc/embeddings.py"
+      - "gpc:gpc/config.py"
+    repo: gpc
+    task: debug
+  - query: "What information does a project rename update across Postgres, Qdrant, and Neo4j?"
+    expected_paths:
+      - "gpc:gpc/project_rename.py"
+    repo: gpc
+    task: review
+  - query: "Quais informações a renomeação de um projeto atualiza no Postgres, Qdrant e Neo4j?"
+    expected_paths:
+      - "gpc:gpc/project_rename.py"
+    repo: gpc
+    task: review
+  - query: "How does the Graphify confidence summary compare extracted, inferred, and ambiguous data?"
+    expected_paths:
+      - "gpc:gpc/graph_query.py"
+    repo: gpc
+    task: debug
+  - query: "Como o resumo de confiança do Graphify compara dados extraídos, inferidos e ambíguos?"
+    expected_paths:
+      - "gpc:gpc/graph_query.py"
+    repo: gpc
+    task: debug
+  - query: "Where does the retention command show deletion counts without deleting usage records?"
+    expected_paths:
+      - "gpc:gpc/cli.py"
+      - "gpc:docs/operations.md"
+    repo: gpc
+    task: review
+  - query: "Onde o comando de retenção mostra as quantidades a excluir sem apagar os registros de uso?"
+    expected_paths:
+      - "gpc:gpc/cli.py"
+      - "gpc:docs/operations.md"
+    repo: gpc
+    task: review
+  - query: "In gpc/embeddings.py, how does embedding_dimension choose the vector size?"
+    expected_paths:
+      - "gpc:gpc/embeddings.py"
+    repo: gpc
+    task: debug
+  - query: "Em gpc/embeddings.py, como embedding_dimension escolhe o tamanho do vetor?"
+    expected_paths:
+      - "gpc:gpc/embeddings.py"
+    repo: gpc
+    task: debug
+  - query: "What does _confidence_shift in gpc/graph_query.py report between snapshots?"
+    expected_paths:
+      - "gpc:gpc/graph_query.py"
+    repo: gpc
+    task: debug
+  - query: "O que _confidence_shift em gpc/graph_query.py informa entre snapshots?"
+    expected_paths:
+      - "gpc:gpc/graph_query.py"
+    repo: gpc
+    task: debug

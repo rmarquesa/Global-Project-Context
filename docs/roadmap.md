@@ -630,6 +630,10 @@ licenciamento.
       e oito pares PT/EN revisados antes da medição. PostgreSQL isolado validado;
       ganhos em identificadores coexistem com regressão na híbrida em português
       natural. Padrões preservados; ver [experimento](plans/2026-11-05-weighted-lexical.md).
+- [x] Seleção híbrida opcional de um chunk por arquivo
+      (`--file-diversity one-per-file`), sem ampliar candidatos ou alterar RRF.
+      Nos casos novos aumentou a diversidade, mas não o recall por arquivo;
+      permanece experimental. Ver [validação](plans/2026-11-05-file-diversity.md).
 - [ ] Reranking aprendido e recuperação de símbolos via AST.
 - [x] Memória de decisões com captura, aprovação, invalidação, supersessão e
       evidência de fonte indexada. CLI/MCP, migrações e ciclo de vida validados

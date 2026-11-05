@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import re
+from collections import Counter
+from collections.abc import Iterable
 from pathlib import PurePosixPath
 from typing import Any
 
@@ -17,6 +19,7 @@ RRF_K = 60
 LEXICAL_STRATEGIES = ("legacy", "weighted")
 WEIGHTED_POLICY_VERSION = "weighted-v1"
 WEIGHTED_TIE_POLICY = "experimental:score-desc,repo,path,chunk_index,content_hash,id"
+FILE_DIVERSITY_POLICIES = ("none", "one-per-file")
 # Fixed English/Portuguese function words only: articles, pronouns,
 # prepositions and auxiliaries. Exact matches only; no domain vocabulary.
 # This exact set and weights are frozen before evaluation for weighted-v1.
@@ -45,6 +48,37 @@ def validate_lexical_strategy(strategy: str, mode: str) -> None:
         raise ValueError(f"lexical_strategy must be one of {LEXICAL_STRATEGIES}")
     if strategy == "weighted" and mode == "semantic":
         raise ValueError("weighted lexical_strategy is not applicable to semantic mode")
+
+
+def validate_file_diversity(policy: str, mode: str) -> None:
+    if policy not in FILE_DIVERSITY_POLICIES:
+        raise ValueError(f"file_diversity must be one of {FILE_DIVERSITY_POLICIES}")
+    if policy != "none" and mode != "hybrid":
+        raise ValueError("one-per-file file_diversity requires hybrid mode")
+
+
+def file_diversity_metadata() -> dict[str, str]:
+    return {
+        "file_diversity": "one-per-file",
+        "selection_policy_version": "one-per-file-v1",
+    }
+
+
+def select_file_indices(identities: Iterable[str], *, k: int, cap: int) -> list[int]:
+    """Select from an existing ranked pool, without rescoring or backfill."""
+    if not isinstance(k, int) or isinstance(k, bool) or k <= 0:
+        raise ValueError("selection k must be a positive integer")
+    if not isinstance(cap, int) or isinstance(cap, bool) or cap not in (1, 2):
+        raise ValueError("candidate replay cap must be 1 or 2")
+    counts: Counter[str] = Counter()
+    selected = []
+    for index, identity in enumerate(identities):
+        if counts[identity] < cap:
+            selected.append(index)
+            counts[identity] += 1
+        if len(selected) == k:
+            break
+    return selected
 
 
 def weighted_query_terms(terms: list[str]) -> list[str]:

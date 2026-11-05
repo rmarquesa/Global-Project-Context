@@ -13,7 +13,12 @@ from gpc.embeddings import active_embedding_model, embedding_dimension
 from gpc.eval_corpus import AVAILABILITY_STATUSES, EvalCorpusSnapshot, load_eval_corpus
 from gpc.eval_candidates import capture_sha256, lexical_ties, path_stats, replay_paths
 from gpc.search import SEARCH_MODES, SEARCH_TASKS, search_project_context
-from gpc.retrieval import validate_lexical_strategy, weighted_policy_metadata
+from gpc.retrieval import (
+    file_diversity_metadata,
+    validate_file_diversity,
+    validate_lexical_strategy,
+    weighted_policy_metadata,
+)
 
 
 def _validate_options(k: int, mode: str, task: str) -> None:
@@ -67,6 +72,7 @@ class SearchEvalReport:
     diagnostics: dict[str, Any] | None = None
     candidate_analysis: dict[str, Any] | None = None
     lexical_strategy: str = "legacy"
+    file_diversity: str = "none"
 
     @property
     def summary(self) -> dict[str, Any]:
@@ -125,6 +131,13 @@ class SearchEvalReport:
             payload["candidate_analysis"] = self.candidate_analysis
         if self.lexical_strategy == "weighted":
             payload.update(weighted_policy_metadata())
+        if self.file_diversity != "none":
+            payload.update(file_diversity_metadata())
+            payload["selection_note"] = (
+                "Select the first chunk per repo-qualified file from the existing "
+                "hydrated hybrid ranking; fewer than k files may be returned. "
+                "No backfill, new query, or larger candidate budget."
+            )
         return payload
 
 
@@ -266,13 +279,17 @@ def run_search_eval(
     diagnose: bool = False,
     analyze_candidates: bool = False,
     lexical_strategy: str = "legacy",
+    file_diversity: str = "none",
 ) -> SearchEvalReport:
     """Measure fixture retrieval; case repo/task override the run defaults."""
     _validate_options(k, mode, task)
     validate_lexical_strategy(lexical_strategy, mode)
+    validate_file_diversity(file_diversity, mode)
     strategy_options = (
         {"lexical_strategy": lexical_strategy} if lexical_strategy != "legacy" else {}
     )
+    if file_diversity != "none":
+        strategy_options["file_diversity"] = file_diversity
     if diagnose or analyze_candidates:
         if k > 100:
             raise ValueError("diagnostic retrieval k must be between 1 and 100")
@@ -304,8 +321,10 @@ def _run_cases(
     fixture_sha256: str = "",
     analyze_candidates: bool = False,
     lexical_strategy: str = "legacy",
+    file_diversity: str = "none",
 ) -> SearchEvalReport:
     validate_lexical_strategy(lexical_strategy, mode)
+    validate_file_diversity(file_diversity, mode)
     for case in cases:
         _validate_case(case)
     rows, latency = {}, {}
@@ -322,6 +341,7 @@ def _run_cases(
             task=effective_task,
             repo=case.repo,
             **({"candidate_trace": trace} if analyze_candidates else {}),
+            **({"file_diversity": file_diversity} if file_diversity != "none" else {}),
             **(
                 {"lexical_strategy": lexical_strategy}
                 if lexical_strategy != "legacy"
@@ -350,6 +370,8 @@ def _run_cases(
     )
     if lexical_strategy != "legacy":
         report = replace(report, lexical_strategy=lexical_strategy)
+    if file_diversity != "none":
+        report = replace(report, file_diversity=file_diversity)
     if snapshot is not None:
         results = [
             replace(
@@ -495,6 +517,7 @@ def compare_search_eval(
     include_lexical: bool = False,
     analyze_candidates: bool = False,
     lexical_strategy: str = "legacy",
+    file_diversity: str = "none",
 ) -> dict[str, Any]:
     """Run the same fixture in semantic/hybrid order; deltas are candidate-baseline.
 
@@ -503,6 +526,7 @@ def compare_search_eval(
     _validate_options(k, "semantic", task)
     # The semantic baseline intentionally keeps the legacy/default call contract.
     validate_lexical_strategy(lexical_strategy, "hybrid")
+    validate_file_diversity(file_diversity, "hybrid")
     if (diagnose or analyze_candidates) and k > 100:
         raise ValueError("diagnostic retrieval k must be between 1 and 100")
     options = {}
@@ -522,7 +546,13 @@ def compare_search_eval(
     if lexical_strategy != "legacy":
         options["lexical_strategy"] = lexical_strategy
     candidate = _run_cases(
-        project, cases, k=k, mode="hybrid", task=task, **options
+        project,
+        cases,
+        k=k,
+        mode="hybrid",
+        task=task,
+        **options,
+        **({"file_diversity": file_diversity} if file_diversity != "none" else {}),
     ).to_dict()
     metrics = (
         "recall_at_k",

@@ -1,10 +1,12 @@
-"""Content-free capture (legacy v1, policy-identified v2) and offline replay.
+"""Content-free capture (legacy v1, weighted v2, selection v3) and offline replay.
 
 Only authoritative hydrated rows supply identities. Channel ranks count unique
 IDs (first occurrence wins), matching retrieval; backend_rank retains the first
 raw position. hydrated/dropped count unique IDs; raw_returned includes duplicates.
 Dropped IDs and their metadata are never serialized. Captures are copied JSON
 values, not references to backend rows or SearchResults.
+Version 3 retains the full preselection ranking and explicitly records returned
+chunk IDs/paths; its actual top-k need not be a prefix of ranked_candidates.
 """
 
 from __future__ import annotations
@@ -14,7 +16,13 @@ import hashlib
 import json
 from typing import Any
 
-from gpc.retrieval import validate_lexical_strategy, weighted_policy_metadata
+from gpc.retrieval import (
+    file_diversity_metadata,
+    select_file_indices,
+    validate_file_diversity,
+    validate_lexical_strategy,
+    weighted_policy_metadata,
+)
 
 
 def capture_sha256(capture: dict[str, Any]) -> str:
@@ -35,8 +43,10 @@ def build_capture(
     k: int,
     candidate_limit: int,
     lexical_strategy: str = "legacy",
+    file_diversity: str = "none",
 ) -> dict[str, Any]:
     validate_lexical_strategy(lexical_strategy, mode)
+    validate_file_diversity(file_diversity, mode)
     hydrated = {
         result.chunk_id: {
             "chunk_id": result.chunk_id,
@@ -95,24 +105,30 @@ def build_capture(
     # Validate all serialized numbers before publishing a successful capture.
     if lexical_strategy == "weighted":
         capture.update({"version": 2, **weighted_policy_metadata()})
+    if file_diversity != "none":
+        rows = capture["ranked_candidates"]
+        indices = select_file_indices(
+            (row["file_identity"] for row in rows), k=k, cap=1
+        )
+        capture.update(
+            {
+                "version": 3,
+                **file_diversity_metadata(),
+                "selected_chunk_ids": [rows[index]["chunk_id"] for index in indices],
+                "selected_paths": [rows[index]["file_identity"] for index in indices],
+            }
+        )
     capture_sha256(capture)
     return capture
 
 
 def replay_paths(capture: dict[str, Any], cap: int) -> list[str]:
     """Filter the existing ranked union; never refill or enlarge its budget."""
-    if cap not in (1, 2):
-        raise ValueError("candidate replay cap must be 1 or 2")
-    counts: Counter[str] = Counter()
-    paths = []
-    for row in capture["ranked_candidates"]:
-        identity = row["file_identity"]
-        if counts[identity] < cap:
-            paths.append(identity)
-            counts[identity] += 1
-        if len(paths) == capture["k"]:
-            break
-    return paths
+    rows = capture["ranked_candidates"]
+    indices = select_file_indices(
+        (row["file_identity"] for row in rows), k=capture["k"], cap=cap
+    )
+    return [rows[index]["file_identity"] for index in indices]
 
 
 def path_stats(paths: list[str], k: int) -> dict[str, Any]:

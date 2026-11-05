@@ -18,6 +18,8 @@ from gpc.retrieval import (
     lexical_candidates,
     query_terms,
     task_preference,
+    select_file_indices,
+    validate_file_diversity,
     validate_lexical_strategy,
     WEIGHTED_POLICY_VERSION,
     WEIGHTED_TIE_POLICY,
@@ -53,6 +55,7 @@ def search_project_context(
     task: str = "general",
     candidate_trace: dict[str, Any] | None = None,
     lexical_strategy: str = "legacy",
+    file_diversity: str = "none",
 ) -> tuple[dict[str, Any], list[SearchResult]]:
     """Retrieve bounded evidence, scoped authoritatively by Postgres ownership.
 
@@ -63,9 +66,11 @@ def search_project_context(
     list means no filter; nonempty lists must contain only valid, nonblank slugs.
     Backend failures propagate: partial hybrid retrieval is never called success.
     candidate_trace opt-in receives a content-free capture of these same
-    candidates (legacy v1; weighted v2 with frozen policy identity). It is
+    candidates (legacy v1; weighted v2; optional selection v3). It is
     cleared even when retrieval fails. Weighted is experimental, lexical/hybrid
     only, with stable repo/path/chunk/hash ties rather than UUID-first ties.
+    Optional one-per-file selection is hybrid-only: keep the first chunk per
+    repo-qualified path in the same hydrated ranking, without rescore or backfill.
     """
     if candidate_trace is not None:
         if not isinstance(candidate_trace, dict):
@@ -76,6 +81,7 @@ def search_project_context(
     if task not in SEARCH_TASKS:
         raise ValueError(f"task must be one of {SEARCH_TASKS}")
     validate_lexical_strategy(lexical_strategy, mode)
+    validate_file_diversity(file_diversity, mode)
     if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 100:
         raise ValueError("limit must be an integer between 1 and 100")
     terms = query_terms(query)
@@ -130,6 +136,11 @@ def search_project_context(
                     task=task,
                     k=limit,
                     candidate_limit=candidate_limit,
+                    **(
+                        {"file_diversity": file_diversity}
+                        if file_diversity != "none"
+                        else {}
+                    ),
                     **(
                         {"lexical_strategy": lexical_strategy}
                         if lexical_strategy != "legacy"
@@ -209,12 +220,31 @@ def search_project_context(
                 k=limit,
                 candidate_limit=candidate_limit,
                 **(
+                    {"file_diversity": file_diversity}
+                    if file_diversity != "none"
+                    else {}
+                ),
+                **(
                     {"lexical_strategy": lexical_strategy}
                     if lexical_strategy != "legacy"
                     else {}
                 ),
             )
         )
+    if file_diversity == "one-per-file":
+        indices = select_file_indices(
+            (
+                (
+                    f"{result.repo_slug}:{result.relative_path}"
+                    if result.repo_slug
+                    else result.relative_path
+                )
+                for _, result in ranked
+            ),
+            k=limit,
+            cap=1,
+        )
+        return resolved_project, [ranked[index][1] for index in indices]
     return resolved_project, [result for _, result in ranked[:limit]]
 
 
