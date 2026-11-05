@@ -1,4 +1,4 @@
-"""Content-free candidate capture v1 and bounded, retrieval-free replay.
+"""Content-free capture (legacy v1, policy-identified v2) and offline replay.
 
 Only authoritative hydrated rows supply identities. Channel ranks count unique
 IDs (first occurrence wins), matching retrieval; backend_rank retains the first
@@ -13,6 +13,8 @@ from collections import Counter
 import hashlib
 import json
 from typing import Any
+
+from gpc.retrieval import validate_lexical_strategy, weighted_policy_metadata
 
 
 def capture_sha256(capture: dict[str, Any]) -> str:
@@ -32,7 +34,9 @@ def build_capture(
     task: str,
     k: int,
     candidate_limit: int,
+    lexical_strategy: str = "legacy",
 ) -> dict[str, Any]:
+    validate_lexical_strategy(lexical_strategy, mode)
     hydrated = {
         result.chunk_id: {
             "chunk_id": result.chunk_id,
@@ -89,6 +93,8 @@ def build_capture(
         ],
     }
     # Validate all serialized numbers before publishing a successful capture.
+    if lexical_strategy == "weighted":
+        capture.update({"version": 2, **weighted_policy_metadata()})
     capture_sha256(capture)
     return capture
 

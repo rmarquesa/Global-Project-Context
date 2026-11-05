@@ -14,6 +14,53 @@ MAX_QUERY_CHARS = 2048
 MAX_QUERY_TERMS = 32
 MAX_CANDIDATES = 300
 RRF_K = 60
+LEXICAL_STRATEGIES = ("legacy", "weighted")
+WEIGHTED_POLICY_VERSION = "weighted-v1"
+WEIGHTED_TIE_POLICY = "experimental:score-desc,repo,path,chunk_index,content_hash,id"
+# Fixed English/Portuguese function words only: articles, pronouns,
+# prepositions and auxiliaries. Exact matches only; no domain vocabulary.
+# This exact set and weights are frozen before evaluation for weighted-v1.
+WEIGHTED_STOPWORDS = frozenset(
+    "a an the i me my we us our you your he him his she her it its they them their "
+    "of in on at to for from by with as is are was were be been being am do does "
+    "did have has had can could will would shall should may might must "
+    "o os a as um uma uns umas eu me mim meu minha nós nos nosso nossa você vocês "
+    "ele ela eles elas seu sua seus suas de do da dos das em no na nos nas ao aos "
+    "à às para por pelo pela pelos pelas com sem entre sobre sob até é são era "
+    "eram ser sido sendo estou está estamos estão estar estava estavam tenho tem "
+    "temos têm ter tinha tinham foi foram fui fomos pode podem poderia poderiam".split()
+)
+
+
+def weighted_policy_metadata() -> dict[str, str]:
+    return {
+        "lexical_strategy": "weighted",
+        "lexical_policy_version": WEIGHTED_POLICY_VERSION,
+        "lexical_tie_policy": WEIGHTED_TIE_POLICY,
+    }
+
+
+def validate_lexical_strategy(strategy: str, mode: str) -> None:
+    if strategy not in LEXICAL_STRATEGIES:
+        raise ValueError(f"lexical_strategy must be one of {LEXICAL_STRATEGIES}")
+    if strategy == "weighted" and mode == "semantic":
+        raise ValueError("weighted lexical_strategy is not applicable to semantic mode")
+
+
+def weighted_query_terms(terms: list[str]) -> list[str]:
+    """Deduplicate case-insensitively, keeping literal spelling and punctuation.
+
+    A sole distinct token is retained even if a function word (e.g. identifier
+    `in`). Multi-token queries drop only exact function-word matches; an empty
+    result intentionally retrieves nothing, never the broad legacy fallback.
+    """
+    distinct = {}
+    for term in terms:
+        distinct.setdefault(term.casefold(), term)
+    if len(distinct) == 1:
+        return list(distinct.values())
+    return [term for key, term in distinct.items() if key not in WEIGHTED_STOPWORDS]
+
 
 # Keep the expression identical to migrations/0010_lexical_search.sql.
 LEXICAL_VECTOR = (
@@ -67,8 +114,14 @@ def lexical_candidates(
     project_id: str,
     repo_slugs: list[str] | None,
     limit: int,
+    lexical_strategy: str = "legacy",
 ) -> list[tuple[str, float]]:
     """Return only bounded, SQL-scoped IDs; never load the corpus into Python."""
+    validate_lexical_strategy(lexical_strategy, "lexical")
+    if lexical_strategy == "weighted":
+        return _weighted_candidates(
+            terms, project_id=project_id, repo_slugs=repo_slugs, limit=limit
+        )
     patterns = [_literal_pattern(term) for term in terms]
     # EXISTS avoids multiplying candidates when several literal terms match.
     # ESCAPE is explicit so user '%'/'_' never broaden a literal lookup.
@@ -103,6 +156,46 @@ def lexical_candidates(
                 patterns,
                 min(limit, MAX_CANDIDATES),
             ),
+        ).fetchall()
+    return [(str(row["id"]), float(row["score"])) for row in rows]
+
+
+def _weighted_candidates(
+    terms: list[str], *, project_id: str, repo_slugs: list[str] | None, limit: int
+) -> list[tuple[str, float]]:
+    """Sum each distinct literal term's strongest field: path 6/title 3/body 1.
+
+    No full-text bonus, frequency multiplier, stemming or corpus download.
+    Ownership is identical to legacy; only bounded IDs/scores leave Postgres.
+    """
+    patterns = [_literal_pattern(term) for term in weighted_query_terms(terms)]
+    if not patterns:
+        return []
+    sql = rf"""
+        with scoped as (
+            select c.id, f.relative_path, c.title, c.content, r.slug as repo_slug,
+                   c.chunk_index, c.content_hash
+            {SCOPED_CHUNKS}
+        ), scored as (
+            select scoped.*, (
+                select sum(case
+                    when coalesce(relative_path, '') ilike terms.pattern escape E'\\' then 6
+                    when coalesce(title, '') ilike terms.pattern escape E'\\' then 3
+                    when content ilike terms.pattern escape E'\\' then 1
+                    else 0 end)
+                from unnest(%s::text[]) as terms(pattern)
+            ) as score
+            from scoped
+        )
+        select id::text as id, score from scored
+        where score > 0
+        order by score desc, repo_slug, relative_path, chunk_index, content_hash, id
+        limit %s
+    """
+    with pg_connection(row_factory=dict_row) as conn:
+        rows = conn.execute(
+            sql,
+            (project_id, repo_slugs, repo_slugs, patterns, min(limit, MAX_CANDIDATES)),
         ).fetchall()
     return [(str(row["id"]), float(row["score"])) for row in rows]
 

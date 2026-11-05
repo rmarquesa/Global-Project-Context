@@ -254,6 +254,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     eval_search_parser.add_argument("--task", choices=SEARCH_TASKS, default="general")
     eval_search_parser.add_argument(
+        "--lexical-strategy",
+        choices=("legacy", "weighted"),
+        default="legacy",
+        help="Experimental weighted lexical policy (lexical/hybrid only); default legacy.",
+    )
+    eval_search_parser.add_argument(
         "--analyze-candidates",
         action="store_true",
         help="Capture content-free shortlists and replay offline file-diversity caps; implies --diagnose. Does not change default retrieval.",
@@ -1123,6 +1129,19 @@ def cmd_token_savings(args: argparse.Namespace) -> int:
 
 def cmd_eval_search(args: argparse.Namespace) -> int:
     from gpc.search_eval import compare_search_eval, run_search_eval
+    from gpc.retrieval import validate_lexical_strategy
+
+    strategy = getattr(args, "lexical_strategy", "legacy")
+    comparing = getattr(args, "compare", False) or getattr(args, "compare_all", False)
+    validate_lexical_strategy(strategy, "hybrid" if comparing else args.mode)
+
+    def print_policy(row: dict) -> None:
+        if "lexical_policy_version" in row:
+            print(
+                f"lexical_strategy={row['lexical_strategy']} "
+                f"lexical_policy_version={row['lexical_policy_version']} "
+                f"lexical_tie_policy={row['lexical_tie_policy']}"
+            )
 
     def print_candidates(row: dict) -> None:
         analysis = row.get("candidate_analysis")
@@ -1164,6 +1183,8 @@ def cmd_eval_search(args: argparse.Namespace) -> int:
             print(f"diagnostic_note={note}")
 
     options = {"diagnose": True} if getattr(args, "diagnose", False) else {}
+    if strategy != "legacy":
+        options["lexical_strategy"] = strategy
     if getattr(args, "analyze_candidates", False):
         options.update({"diagnose": True, "analyze_candidates": True})
     compare_all = getattr(args, "compare_all", False)
@@ -1194,6 +1215,7 @@ def cmd_eval_search(args: argparse.Namespace) -> int:
                     for key, value in row["summary"].items()
                 )
                 print(f"{name} mode={row['mode']} {metrics}")
+                print_policy(row)
                 print_diagnostics(row)
                 print_candidates(row)
             print(
@@ -1220,6 +1242,8 @@ def cmd_eval_search(args: argparse.Namespace) -> int:
         print(json.dumps(report.to_dict(), indent=2))
     else:
         summary = report.summary
+        if strategy != "legacy":
+            print_policy(report.to_dict())
         print(
             f"project={args.project} queries={summary['queries']} "
             f"hits={summary['hits']}/{summary['expected_paths']} "

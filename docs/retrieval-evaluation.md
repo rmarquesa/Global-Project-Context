@@ -145,6 +145,50 @@ Portuguese expected paths were absent from the candidate pools, and all twelve
 lexical candidate lists had 15-way score ties. This points to candidate-generation
 work rather than treating per-file caps as a complete fix. Defaults are unchanged.
 
+## Experimental weighted lexical strategy
+
+```bash
+# Run both on the SAME index; compare hybrid/lexical results across the reports.
+gpc eval-search --project my-project --fixture paired.yaml --k 5 --compare-all --analyze-candidates --json
+gpc eval-search --project my-project --fixture paired.yaml --k 5 --compare-all --lexical-strategy weighted --analyze-candidates --json
+```
+
+`--lexical-strategy weighted` is experimental and affects lexical/hybrid only.
+The comparison's semantic baseline is unchanged. A single semantic run with
+`weighted` is rejected before retrieval; use `--mode lexical`, `--mode hybrid`,
+`--compare` or `--compare-all`. Omitting the option retains the existing `legacy`
+strategy and default JSON/capture contracts. The Python search/evaluation APIs
+also accept `lexical_strategy="weighted"`; MCP defaults are unchanged.
+
+Policy `weighted-v1` removes a fixed English/Portuguese function-word set from
+multi-term queries and deduplicates case-insensitively. Each remaining literal
+term contributes once using its strongest matched field: **path 6**, otherwise
+**title 3**, otherwise **content 1**. Repeated occurrences do not increase the
+score. A single distinct token remains searchable even if it is a function
+word; an all-filtered multi-term query yields no lexical candidates. The exact
+131-word set is defined in `gpc/retrieval.py:WEIGHTED_STOPWORDS`.
+
+There is no stemming, translation, BM25 or learned reranking. Literal substring
+matching can still be noisy. Experimental ties use repository/path/chunk metadata
+before UUIDs, including after hydration and task preferences; stable ordering is
+not itself evidence of better relevance. Candidate output is bounded, but SQL
+scoring work still grows with the scoped corpus size.
+
+Weighted reports identify `lexical_strategy`, `lexical_policy_version` and
+`lexical_tie_policy`. Their content-free captures use version 2 and include that
+identity in the capture hash; legacy captures remain version 1. The baseline
+metric keys and denominators are unchanged. The
+[paired fixture](paired-retrieval-fixture.md) and
+[predeclared experiment](plans/2026-11-05-weighted-lexical.md) document provenance,
+validation and limitations. Do not tune this policy to those development labels
+and then present the same cases as a held-out benchmark.
+
+The recorded same-index paired experiment improved top-five hits from 9→12 of 16
+for hybrid and 1→12 of 16 for lexical. **Natural Portuguese hybrid regressed from
+1→0 of four**, while identifier-bearing cases improved. Large ties and repeated
+files remain. Weighted is therefore still opt-in; aggregate gains are not a
+production rollout recommendation.
+
 Before optimizing ranking, have a reviewer inspect every expected path and
 rationale, then add held-out user queries with independently reviewed
 relevance judgments. In particular, no-answer correctness is not scored here:

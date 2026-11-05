@@ -1,0 +1,65 @@
+queries:
+  - query: "How can I tell whether an already-applied database migration was edited after deployment?"
+    expected_paths: ["gpc:scripts/migrate.py"]
+    repo: gpc
+    task: debug
+  - query: "Como descubro se uma migração já aplicada foi alterada depois da implantação?"
+    expected_paths: ["gpc:scripts/migrate.py"]
+    repo: gpc
+    task: debug
+  - query: "Where does the client configuration installer choose which configuration files to update?"
+    expected_paths: ["gpc:scripts/install_mcp_clients.py"]
+    repo: gpc
+    task: implement
+  - query: "Em que lugar o instalador de configuração do cliente decide quais arquivos de configuração atualizar?"
+    expected_paths: ["gpc:scripts/install_mcp_clients.py"]
+    repo: gpc
+    task: implement
+  - query: "What does the token savings report count from indexed chunks?"
+    expected_paths: ["gpc:gpc/token_economy.py"]
+    repo: gpc
+    task: review
+  - query: "O que o relatório de economia de tokens contabiliza nos trechos indexados?"
+    expected_paths: ["gpc:gpc/token_economy.py"]
+    repo: gpc
+    task: review
+  - query: "How are sensitive values removed from recorded MCP call arguments?"
+    expected_paths: ["gpc:gpc/mcp_observability.py"]
+    repo: gpc
+    task: review
+  - query: "Como valores sensíveis são removidos dos argumentos registrados nas chamadas MCP?"
+    expected_paths: ["gpc:gpc/mcp_observability.py"]
+    repo: gpc
+    task: review
+  - query: "In scripts/migrate.py, what detects a checksum mismatch for migration 0010_lexical_search.sql?"
+    expected_paths: ["gpc:scripts/migrate.py"]
+    repo: gpc
+    task: debug
+  - query: "Em scripts/migrate.py, o que detecta uma divergência de checksum na migração 0010_lexical_search.sql?"
+    expected_paths: ["gpc:scripts/migrate.py"]
+    repo: gpc
+    task: debug
+  - query: "What does redact_sensitive do in gpc/mcp_observability.py to mask a database password?"
+    expected_paths: ["gpc:gpc/mcp_observability.py"]
+    repo: gpc
+    task: review
+  - query: "O que redact_sensitive faz em gpc/mcp_observability.py para ocultar uma senha de banco de dados?"
+    expected_paths: ["gpc:gpc/mcp_observability.py"]
+    repo: gpc
+    task: review
+  - query: "Which repository-resolution behavior is implemented by resolve_repo in gpc/registry.py?"
+    expected_paths: ["gpc:gpc/registry.py"]
+    repo: gpc
+    task: debug
+  - query: "Qual comportamento de resolução de repositório é implementado por resolve_repo em gpc/registry.py?"
+    expected_paths: ["gpc:gpc/registry.py"]
+    repo: gpc
+    task: debug
+  - query: "How does count_tokens in gpc/token_economy.py estimate token counts for text?"
+    expected_paths: ["gpc:gpc/token_economy.py"]
+    repo: gpc
+    task: review
+  - query: "Como count_tokens em gpc/token_economy.py estima a quantidade de tokens de um texto?"
+    expected_paths: ["gpc:gpc/token_economy.py"]
+    repo: gpc
+    task: review

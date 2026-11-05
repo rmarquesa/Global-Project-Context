@@ -18,6 +18,9 @@ from gpc.retrieval import (
     lexical_candidates,
     query_terms,
     task_preference,
+    validate_lexical_strategy,
+    WEIGHTED_POLICY_VERSION,
+    WEIGHTED_TIE_POLICY,
 )
 
 SEARCH_MODES = ("semantic", "lexical", "hybrid")
@@ -49,6 +52,7 @@ def search_project_context(
     mode: str = "semantic",
     task: str = "general",
     candidate_trace: dict[str, Any] | None = None,
+    lexical_strategy: str = "legacy",
 ) -> tuple[dict[str, Any], list[SearchResult]]:
     """Retrieve bounded evidence, scoped authoritatively by Postgres ownership.
 
@@ -58,8 +62,10 @@ def search_project_context(
     task preference affects ordering, not the reported raw score. An empty repo
     list means no filter; nonempty lists must contain only valid, nonblank slugs.
     Backend failures propagate: partial hybrid retrieval is never called success.
-    candidate_trace opt-in receives a content-free v1 capture of these same
-    candidates (see eval_candidates); it is cleared even when retrieval fails.
+    candidate_trace opt-in receives a content-free capture of these same
+    candidates (legacy v1; weighted v2 with frozen policy identity). It is
+    cleared even when retrieval fails. Weighted is experimental, lexical/hybrid
+    only, with stable repo/path/chunk/hash ties rather than UUID-first ties.
     """
     if candidate_trace is not None:
         if not isinstance(candidate_trace, dict):
@@ -69,6 +75,7 @@ def search_project_context(
         raise ValueError(f"mode must be one of {SEARCH_MODES}")
     if task not in SEARCH_TASKS:
         raise ValueError(f"task must be one of {SEARCH_TASKS}")
+    validate_lexical_strategy(lexical_strategy, mode)
     if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 100:
         raise ValueError("limit must be an integer between 1 and 100")
     terms = query_terms(query)
@@ -88,6 +95,11 @@ def search_project_context(
             project_id=project_id,
             repo_slugs=repo_slugs,
             limit=candidate_limit,
+            **(
+                {"lexical_strategy": lexical_strategy}
+                if lexical_strategy != "legacy"
+                else {}
+            ),
         )
 
     scores: dict[str, float] = {}
@@ -118,6 +130,11 @@ def search_project_context(
                     task=task,
                     k=limit,
                     candidate_limit=candidate_limit,
+                    **(
+                        {"lexical_strategy": lexical_strategy}
+                        if lexical_strategy != "legacy"
+                        else {}
+                    ),
                 )
             )
         return resolved_project, []
@@ -130,6 +147,13 @@ def search_project_context(
         if not chunk:
             continue
         factor = 1.0
+        if lexical_strategy == "weighted":
+            signals[chunk_id].extend(
+                [
+                    f"lexical-policy:{WEIGHTED_POLICY_VERSION}",
+                    f"tie:{WEIGHTED_TIE_POLICY}",
+                ]
+            )
         if mode == "hybrid":
             signals[chunk_id].append(f"rrf:k={RRF_K}")
         if mode != "semantic" and task != "general":
@@ -155,7 +179,22 @@ def search_project_context(
             )
         )
     if mode != "semantic":
-        ranked.sort(key=lambda item: (-item[0], item[1].chunk_id))
+        if lexical_strategy == "weighted":
+
+            def weighted_key(item):
+                chunk = chunk_by_id[item[1].chunk_id]
+                return (
+                    -item[0],
+                    chunk.get("repo_slug") or "",
+                    chunk["relative_path"],
+                    chunk.get("chunk_index", 0),
+                    chunk.get("content_hash", ""),
+                    item[1].chunk_id,
+                )
+
+            ranked.sort(key=weighted_key)
+        else:
+            ranked.sort(key=lambda item: (-item[0], item[1].chunk_id))
     else:
         ranked.sort(key=lambda item: order[item[1].chunk_id])
     if candidate_trace is not None:
@@ -169,6 +208,11 @@ def search_project_context(
                 task=task,
                 k=limit,
                 candidate_limit=candidate_limit,
+                **(
+                    {"lexical_strategy": lexical_strategy}
+                    if lexical_strategy != "legacy"
+                    else {}
+                ),
             )
         )
     return resolved_project, [result for _, result in ranked[:limit]]
@@ -436,6 +480,8 @@ def _fetch_chunks(
                 c.title,
                 c.content,
                 c.chunk_type,
+                c.chunk_index,
+                c.content_hash,
                 f.relative_path,
                 f.language,
                 r.slug as repo_slug

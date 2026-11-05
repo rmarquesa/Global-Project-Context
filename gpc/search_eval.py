@@ -13,6 +13,7 @@ from gpc.embeddings import active_embedding_model, embedding_dimension
 from gpc.eval_corpus import AVAILABILITY_STATUSES, EvalCorpusSnapshot, load_eval_corpus
 from gpc.eval_candidates import capture_sha256, lexical_ties, path_stats, replay_paths
 from gpc.search import SEARCH_MODES, SEARCH_TASKS, search_project_context
+from gpc.retrieval import validate_lexical_strategy, weighted_policy_metadata
 
 
 def _validate_options(k: int, mode: str, task: str) -> None:
@@ -65,6 +66,7 @@ class SearchEvalReport:
     task: str = "general"
     diagnostics: dict[str, Any] | None = None
     candidate_analysis: dict[str, Any] | None = None
+    lexical_strategy: str = "legacy"
 
     @property
     def summary(self) -> dict[str, Any]:
@@ -121,6 +123,8 @@ class SearchEvalReport:
             payload["diagnostics"] = self.diagnostics
         if self.candidate_analysis is not None:
             payload["candidate_analysis"] = self.candidate_analysis
+        if self.lexical_strategy == "weighted":
+            payload.update(weighted_policy_metadata())
         return payload
 
 
@@ -261,9 +265,14 @@ def run_search_eval(
     task: str = "general",
     diagnose: bool = False,
     analyze_candidates: bool = False,
+    lexical_strategy: str = "legacy",
 ) -> SearchEvalReport:
     """Measure fixture retrieval; case repo/task override the run defaults."""
     _validate_options(k, mode, task)
+    validate_lexical_strategy(lexical_strategy, mode)
+    strategy_options = (
+        {"lexical_strategy": lexical_strategy} if lexical_strategy != "legacy" else {}
+    )
     if diagnose or analyze_candidates:
         if k > 100:
             raise ValueError("diagnostic retrieval k must be between 1 and 100")
@@ -278,9 +287,10 @@ def run_search_eval(
             snapshot=snapshot,
             fixture_sha256=fingerprint,
             **({"analyze_candidates": True} if analyze_candidates else {}),
+            **strategy_options,
         )
     cases = load_search_eval_fixture(fixture_path)
-    return _run_cases(project, cases, k=k, mode=mode, task=task)
+    return _run_cases(project, cases, k=k, mode=mode, task=task, **strategy_options)
 
 
 def _run_cases(
@@ -293,7 +303,9 @@ def _run_cases(
     snapshot: EvalCorpusSnapshot | None = None,
     fixture_sha256: str = "",
     analyze_candidates: bool = False,
+    lexical_strategy: str = "legacy",
 ) -> SearchEvalReport:
+    validate_lexical_strategy(lexical_strategy, mode)
     for case in cases:
         _validate_case(case)
     rows, latency = {}, {}
@@ -310,6 +322,11 @@ def _run_cases(
             task=effective_task,
             repo=case.repo,
             **({"candidate_trace": trace} if analyze_candidates else {}),
+            **(
+                {"lexical_strategy": lexical_strategy}
+                if lexical_strategy != "legacy"
+                else {}
+            ),
         )
         if analyze_candidates:
             captures.append(trace)
@@ -331,6 +348,8 @@ def _run_cases(
         task=task,
         latency_by_query=latency,
     )
+    if lexical_strategy != "legacy":
+        report = replace(report, lexical_strategy=lexical_strategy)
     if snapshot is not None:
         results = [
             replace(
@@ -475,12 +494,15 @@ def compare_search_eval(
     diagnose: bool = False,
     include_lexical: bool = False,
     analyze_candidates: bool = False,
+    lexical_strategy: str = "legacy",
 ) -> dict[str, Any]:
     """Run the same fixture in semantic/hybrid order; deltas are candidate-baseline.
 
     These fixture-specific measurements are not evidence of production gains.
     """
     _validate_options(k, "semantic", task)
+    # The semantic baseline intentionally keeps the legacy/default call contract.
+    validate_lexical_strategy(lexical_strategy, "hybrid")
     if (diagnose or analyze_candidates) and k > 100:
         raise ValueError("diagnostic retrieval k must be between 1 and 100")
     options = {}
@@ -497,6 +519,8 @@ def compare_search_eval(
     baseline = _run_cases(
         project, cases, k=k, mode="semantic", task=task, **options
     ).to_dict()
+    if lexical_strategy != "legacy":
+        options["lexical_strategy"] = lexical_strategy
     candidate = _run_cases(
         project, cases, k=k, mode="hybrid", task=task, **options
     ).to_dict()

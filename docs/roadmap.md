@@ -626,6 +626,10 @@ licenciamento.
       `--analyze-candidates`, preservando o ranking padrão. Paridade de resultados
       validada no mesmo índice isolado; lacunas de candidatos e empates léxicos
       continuam pendentes. Ver [resultados](plans/2026-11-05-candidate-analysis.md).
+- [x] Estratégia lexical ponderada experimental (`--lexical-strategy weighted`)
+      e oito pares PT/EN revisados antes da medição. PostgreSQL isolado validado;
+      ganhos em identificadores coexistem com regressão na híbrida em português
+      natural. Padrões preservados; ver [experimento](plans/2026-11-05-weighted-lexical.md).
 - [ ] Reranking aprendido e recuperação de símbolos via AST.
 - [x] Memória de decisões com captura, aprovação, invalidação, supersessão e
       evidência de fonte indexada. CLI/MCP, migrações e ciclo de vida validados
