@@ -48,6 +48,7 @@ def search_project_context(
     repo: str | list[str] | None = None,
     mode: str = "semantic",
     task: str = "general",
+    candidate_trace: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], list[SearchResult]]:
     """Retrieve bounded evidence, scoped authoritatively by Postgres ownership.
 
@@ -57,7 +58,13 @@ def search_project_context(
     task preference affects ordering, not the reported raw score. An empty repo
     list means no filter; nonempty lists must contain only valid, nonblank slugs.
     Backend failures propagate: partial hybrid retrieval is never called success.
+    candidate_trace opt-in receives a content-free v1 capture of these same
+    candidates (see eval_candidates); it is cleared even when retrieval fails.
     """
+    if candidate_trace is not None:
+        if not isinstance(candidate_trace, dict):
+            raise ValueError("candidate_trace must be a dict")
+        candidate_trace.clear()
     if mode not in SEARCH_MODES:
         raise ValueError(f"mode must be one of {SEARCH_MODES}")
     if task not in SEARCH_TASKS:
@@ -100,6 +107,19 @@ def search_project_context(
             signals.setdefault(chunk_id, []).append(f"{channel}:rank={rank}")
 
     if not scores:
+        if candidate_trace is not None:
+            from gpc.eval_candidates import build_capture
+
+            candidate_trace.update(
+                build_capture(
+                    channels,
+                    [],
+                    mode=mode,
+                    task=task,
+                    k=limit,
+                    candidate_limit=candidate_limit,
+                )
+            )
         return resolved_project, []
     chunks = _fetch_chunks(list(scores), project_id=project_id, repo_slugs=repo_slugs)
     chunk_by_id = {str(chunk["id"]): chunk for chunk in chunks}
@@ -138,6 +158,19 @@ def search_project_context(
         ranked.sort(key=lambda item: (-item[0], item[1].chunk_id))
     else:
         ranked.sort(key=lambda item: order[item[1].chunk_id])
+    if candidate_trace is not None:
+        from gpc.eval_candidates import build_capture
+
+        candidate_trace.update(
+            build_capture(
+                channels,
+                ranked,
+                mode=mode,
+                task=task,
+                k=limit,
+                candidate_limit=candidate_limit,
+            )
+        )
     return resolved_project, [result for _, result in ranked[:limit]]
 
 

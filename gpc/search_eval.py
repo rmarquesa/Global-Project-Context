@@ -11,6 +11,7 @@ from typing import Any, Iterable
 from gpc.config import EMBEDDING_PROVIDER
 from gpc.embeddings import active_embedding_model, embedding_dimension
 from gpc.eval_corpus import AVAILABILITY_STATUSES, EvalCorpusSnapshot, load_eval_corpus
+from gpc.eval_candidates import capture_sha256, lexical_ties, path_stats, replay_paths
 from gpc.search import SEARCH_MODES, SEARCH_TASKS, search_project_context
 
 
@@ -42,11 +43,14 @@ class SearchEvalResult:
     repo: str | list[str] | None = None
     task: str = "general"
     diagnostics: dict[str, Any] | None = None
+    candidate_analysis: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
         if self.diagnostics is None:
             payload.pop("diagnostics")
+        if self.candidate_analysis is None:
+            payload.pop("candidate_analysis")
         return payload
 
 
@@ -60,6 +64,7 @@ class SearchEvalReport:
     mode: str = "semantic"
     task: str = "general"
     diagnostics: dict[str, Any] | None = None
+    candidate_analysis: dict[str, Any] | None = None
 
     @property
     def summary(self) -> dict[str, Any]:
@@ -114,6 +119,8 @@ class SearchEvalReport:
         }
         if self.diagnostics is not None:
             payload["diagnostics"] = self.diagnostics
+        if self.candidate_analysis is not None:
+            payload["candidate_analysis"] = self.candidate_analysis
         return payload
 
 
@@ -253,10 +260,11 @@ def run_search_eval(
     mode: str = "semantic",
     task: str = "general",
     diagnose: bool = False,
+    analyze_candidates: bool = False,
 ) -> SearchEvalReport:
     """Measure fixture retrieval; case repo/task override the run defaults."""
     _validate_options(k, mode, task)
-    if diagnose:
+    if diagnose or analyze_candidates:
         if k > 100:
             raise ValueError("diagnostic retrieval k must be between 1 and 100")
         cases, fingerprint = _load_fixture_snapshot(fixture_path)
@@ -269,6 +277,7 @@ def run_search_eval(
             task=task,
             snapshot=snapshot,
             fixture_sha256=fingerprint,
+            **({"analyze_candidates": True} if analyze_candidates else {}),
         )
     cases = load_search_eval_fixture(fixture_path)
     return _run_cases(project, cases, k=k, mode=mode, task=task)
@@ -283,12 +292,15 @@ def _run_cases(
     task: str,
     snapshot: EvalCorpusSnapshot | None = None,
     fixture_sha256: str = "",
+    analyze_candidates: bool = False,
 ) -> SearchEvalReport:
     for case in cases:
         _validate_case(case)
     rows, latency = {}, {}
+    captures: list[dict[str, Any]] = []
     for i, case in enumerate(cases):
         effective_task = case.task or task
+        trace: dict[str, Any] = {}
         started = time.perf_counter()
         _, found = search_project_context(
             case.query,
@@ -297,7 +309,10 @@ def _run_cases(
             mode=mode,
             task=effective_task,
             repo=case.repo,
+            **({"candidate_trace": trace} if analyze_candidates else {}),
         )
+        if analyze_candidates:
+            captures.append(trace)
         key = (case.query, str(case.repo), effective_task, i)
         latency[key] = round((time.perf_counter() - started) * 1000, 2)
         rows[key] = [
@@ -337,7 +352,118 @@ def _run_cases(
                 },
             },
         )
+    if analyze_candidates:
+        report = _analyze_candidates(report, cases, captures)
     return report
+
+
+def _metric_summary(report: SearchEvalReport) -> dict[str, Any]:
+    """Offline replay has no retrieval latency measurement."""
+    return {k: v for k, v in report.summary.items() if not k.endswith("latency_ms")}
+
+
+def _analyze_candidates(
+    report: SearchEvalReport,
+    cases: list[SearchEvalCase],
+    captures: list[dict[str, Any]],
+) -> SearchEvalReport:
+    def score(subcases, rows, k):
+        return compute_search_eval(
+            subcases,
+            results_by_query=rows,
+            k=k,
+            mode=report.mode,
+            task=report.task,
+            provider=report.provider,
+            model=report.model,
+            dimensions=report.dimensions,
+        )
+
+    def coverage(labels, paths):
+        matched = _label_ranks(labels, paths)
+        return {
+            "expected_paths": len(labels),
+            "hits": len(matched),
+            "hit_paths": [label for label in labels if label in matched],
+            "missing_expected_paths": [
+                label for label in labels if label not in matched
+            ],
+        }
+
+    replay_rows: dict[int, dict[Any, list[str]]] = {1: {}, 2: {}}
+    results = []
+    pool_hits = 0
+    pool_available = 0
+    for i, (case, result, capture) in enumerate(zip(cases, report.results, captures)):
+        key = (case.query, str(case.repo), case.task or report.task, i)
+        pool_paths = [row["file_identity"] for row in capture["ranked_candidates"]]
+        pool = coverage(result.expected_paths, pool_paths)
+        pool.update(
+            {"total_available": len(pool_paths), "unique_files": len(set(pool_paths))}
+        )
+        pool_hits += len(pool["hit_paths"])
+        pool_available += len(pool_paths)
+        channels = {}
+        for name, channel in capture["channels"].items():
+            paths = [row["file_identity"] for row in channel["candidates"]]
+            channels[name] = {
+                **{key: value for key, value in channel.items() if key != "candidates"},
+                "unique_files": len(set(paths)),
+                **coverage(result.expected_paths, paths),
+            }
+        caps = {}
+        for cap in (1, 2):
+            paths = replay_paths(capture, cap)
+            replay_rows[cap][key] = paths
+            replay_report = score([case], {case.query: paths}, report.k)
+            replay_result = replay_report.results[0].to_dict()
+            replay_result.pop("latency_ms")
+            caps[f"cap_{cap}"] = {
+                **replay_result,
+                "summary": _metric_summary(replay_report),
+                **path_stats(paths, report.k),
+            }
+        analysis = {
+            "case_index": i,
+            "capture": capture,
+            "capture_sha256": capture_sha256(capture),
+            "channels": channels,
+            "lexical_ties": lexical_ties(capture["channels"].get("lexical", {})),
+            "candidate_pool": pool,
+            "baseline": {
+                **path_stats(result.result_paths, report.k),
+                **coverage(result.expected_paths, result.result_paths),
+            },
+            "caps": caps,
+        }
+        results.append(replace(result, candidate_analysis=analysis))
+    caps_summary = {}
+    for cap in (1, 2):
+        replay_report = score(cases, replay_rows[cap], report.k)
+        stats = [
+            path_stats(row.result_paths, report.k) for row in replay_report.results
+        ]
+        caps_summary[f"cap_{cap}"] = {
+            **_metric_summary(replay_report),
+            "short_results": sum(row["short_results"] for row in stats),
+            "unfilled_slots": sum(row["unfilled_slots"] for row in stats),
+            "unique_file_occurrences": sum(row["unique_files"] for row in stats),
+        }
+    expected = report.summary["expected_paths"]
+    return replace(
+        report,
+        results=results,
+        candidate_analysis={
+            "note": "Offline caps filter the same hydrated shortlist, not default retrieval; no refill, new query, or larger candidate budget. Capture hashes describe safe captures only, not whole-corpus or model state.",
+            "candidate_pool": {
+                "total_available": pool_available,
+                "hits": pool_hits,
+                "expected_paths": expected,
+                "recall": pool_hits / expected if expected else 0.0,
+            },
+            "caps": caps_summary,
+        },
+    )
 
 
 def compare_search_eval(
@@ -348,16 +474,17 @@ def compare_search_eval(
     task: str = "general",
     diagnose: bool = False,
     include_lexical: bool = False,
+    analyze_candidates: bool = False,
 ) -> dict[str, Any]:
     """Run the same fixture in semantic/hybrid order; deltas are candidate-baseline.
 
     These fixture-specific measurements are not evidence of production gains.
     """
     _validate_options(k, "semantic", task)
-    if diagnose and k > 100:
+    if (diagnose or analyze_candidates) and k > 100:
         raise ValueError("diagnostic retrieval k must be between 1 and 100")
     options = {}
-    if diagnose:
+    if diagnose or analyze_candidates:
         cases, fingerprint = _load_fixture_snapshot(fixture_path)
         options = {
             "snapshot": load_eval_corpus(project, cases),
@@ -365,6 +492,8 @@ def compare_search_eval(
         }
     else:
         cases = load_search_eval_fixture(fixture_path)
+    if analyze_candidates:
+        options["analyze_candidates"] = True
     baseline = _run_cases(
         project, cases, k=k, mode="semantic", task=task, **options
     ).to_dict()

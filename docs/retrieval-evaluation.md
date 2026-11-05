@@ -101,6 +101,50 @@ revision. The snapshot omits file contents and absolute repository roots.
 semantic). Modes execute in semantic → hybrid → lexical order. All use one
 parsed fixture and, with diagnostics enabled, the same metadata snapshot.
 
+## Inspect candidates and replay per-file caps
+
+```bash
+gpc eval-search --project my-project --fixture my-eval.yaml --k 5 --compare-all --analyze-candidates --json
+```
+
+`--analyze-candidates` implies `--diagnose`. It adds `candidate_analysis` to each
+case and report without changing baseline results or summary metrics. There is
+no new search/MCP ranking default.
+
+Each case includes a versioned, content-free `capture` of the same candidates
+already retrieved: channels in backend order and the hydrated, ranked pool
+before top-k. Only the existing scoped PostgreSQL hydration supplies file
+identities. Dropped candidates contribute counts, not leaked IDs or metadata.
+Captures omit chunk content, titles and absolute roots; they still contain
+repository-relative paths and should be treated as private project metadata.
+`capture_sha256` fingerprints that capture, not the whole corpus or model state.
+
+- `channels`: returned/hydrated/dropped counts, distinct files and expected-label
+  coverage per channel. Raw counts include duplicates; hydrated/dropped counts
+  refer to unique chunk IDs.
+- `lexical_ties`: exact score distribution among hydrated lexical candidates.
+- `candidate_pool`: expected-label coverage before the final top-k cutoff. Its
+  recall is **not recall@k**; the pool can contain more than k chunks.
+- `baseline`: final result count, distinct-file occupancy and missing labels.
+- `caps.cap_1` / `caps.cap_2`: offline replays allowing at most one/two chunks per
+  repository-qualified file, scanning the already ranked pool in order.
+
+Replays do not rerank, retrieve again, enlarge the pool or refill short outputs.
+Their `short_results` and `unfilled_slots` show when the captured pool cannot
+provide k eligible results. Aggregate cap metrics use the same evaluator and
+denominators as baseline, with no fabricated retrieval latency. Higher file
+diversity alone does not establish more relevant evidence.
+
+The [candidate-analysis protocol](plans/2026-11-05-candidate-analysis.md) records
+validation and measurement limits. The twelve development cases are not paired
+translations or a representative language benchmark.
+
+In the fixed-corpus experiment, both caps recovered one additional semantic
+expected-label occurrence (6→7 of 19); cap 1 also left five cases short. Most
+Portuguese expected paths were absent from the candidate pools, and all twelve
+lexical candidate lists had 15-way score ties. This points to candidate-generation
+work rather than treating per-file caps as a complete fix. Defaults are unchanged.
+
 Before optimizing ranking, have a reviewer inspect every expected path and
 rationale, then add held-out user queries with independently reviewed
 relevance judgments. In particular, no-answer correctness is not scored here:

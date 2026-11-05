@@ -622,6 +622,10 @@ licenciamento.
       com `eval-search --compare-all --diagnose`, sem alterar denominadores das
       métricas. Fixture de desenvolvimento com 12 casos PT/EN e proveniência;
       não é benchmark representativo. Ver [guia de avaliação](retrieval-evaluation.md).
+- [x] Análise opcional de candidatos e replay offline de limites por arquivo com
+      `--analyze-candidates`, preservando o ranking padrão. Paridade de resultados
+      validada no mesmo índice isolado; lacunas de candidatos e empates léxicos
+      continuam pendentes. Ver [resultados](plans/2026-11-05-candidate-analysis.md).
 - [ ] Reranking aprendido e recuperação de símbolos via AST.
 - [x] Memória de decisões com captura, aprovação, invalidação, supersessão e
       evidência de fonte indexada. CLI/MCP, migrações e ciclo de vida validados

@@ -130,3 +130,59 @@ def test_legacy_direct_namespace_no_new_kwargs_or_payload_keys(monkeypatch, caps
     assert calls == [{"k": 5, "mode": "lexical", "task": "general"}]
     payload = json.loads(capsys.readouterr().out)
     assert "diagnostics" not in payload and "diagnostics" not in payload["results"][0]
+
+
+@pytest.mark.parametrize(
+    "flags", [("--mode", "lexical"), ("--compare",), ("--compare-all",)]
+)
+def test_candidate_analysis_implies_diagnose_for_all_cli_modes(
+    monkeypatch, capsys, flags
+):
+    from dataclasses import replace
+
+    report = replace(
+        sample_report(),
+        candidate_analysis={
+            "candidate_pool": {"hits": 1, "expected_paths": 2, "total_available": 3},
+            "caps": {"cap_1": {"recall_at_k": 0.5}, "cap_2": {"recall_at_k": 0.5}},
+            "note": "Offline shortlist caps are not default retrieval; no refill.",
+        },
+    )
+    calls = []
+
+    def run(*a, **kw):
+        calls.append(kw)
+        return report
+
+    def compare(*a, **kw):
+        calls.append(kw)
+        return {
+            "baseline": report.to_dict(),
+            "candidate": report.to_dict(),
+            "lexical": report.to_dict(),
+            "delta": {"recall_at_k": 0.0},
+            "lexical_delta": {"recall_at_k": 0.0},
+            "comparison_note": "offline",
+        }
+
+    monkeypatch.setattr(evaluation, "run_search_eval", run)
+    monkeypatch.setattr(evaluation, "compare_search_eval", compare)
+    assert cmd_eval_search(args(*flags, "--analyze-candidates")) == 0
+    output = capsys.readouterr().out
+    assert calls[-1]["diagnose"] is calls[-1]["analyze_candidates"] is True
+    assert "candidate_coverage hits=1/2 total_available=3" in output
+    assert "offline_cap_1" in output and "offline_cap_2" in output
+    assert "not default retrieval" in output
+    assert cmd_eval_search(args(*flags, "--analyze-candidates", "--json")) == 0
+    payload = json.loads(capsys.readouterr().out)
+    if "--mode" not in flags:
+        payload = payload["baseline"]
+    assert payload["candidate_analysis"] == report.candidate_analysis
+
+
+def test_candidate_analysis_help_explains_implied_diagnostics(capsys):
+    with pytest.raises(SystemExit):
+        args("--help")
+    output = capsys.readouterr().out
+    assert "--analyze-candidates" in output
+    assert "implies --diagnose" in output

@@ -1,6 +1,7 @@
 """Retrieval contracts with fake backends, not PostgreSQL engine validation."""
 
 from contextlib import contextmanager
+import json
 from pathlib import Path
 import re
 from types import SimpleNamespace
@@ -412,6 +413,123 @@ def test_candidate_bounds_and_result_limit(backend):
     assert backend.vector.query_points.call_args.kwargs["limit"] == 300
     assert backend.pg.calls[0][1][-1] == 300
     assert len(backend.pg.calls[1][1][-1]) <= 600
+
+
+@pytest.mark.parametrize("mode", search.SEARCH_MODES)
+@pytest.mark.parametrize("task", search.SEARCH_TASKS)
+def test_candidate_capture_preserves_results_budget_and_backend_calls(
+    backend, mode, task
+):
+    backend.pg.rows = [
+        chunk(1, "src/main.py"),
+        chunk(2, "tests/test_main.py"),
+        chunk(3, "docs/main.md"),
+    ]
+    backend.vector.query_points.return_value.points = [point(3), point(1), point(2)]
+    baseline = search.search_project_context("generic", limit=2, mode=mode, task=task)
+    calls = list(backend.pg.calls)
+    backend.pg.calls.clear()
+    backend.vector.query_points.reset_mock()
+    backend.embed.reset_mock()
+    trace = {"stale": True}
+    captured = search.search_project_context(
+        "generic", limit=2, mode=mode, task=task, candidate_trace=trace
+    )
+    assert captured == baseline  # full frozen SearchResult equality, not just IDs
+    assert backend.pg.calls == calls
+    assert len(calls) == (1 if mode == "semantic" else 2)
+    assert backend.vector.query_points.call_count == (mode != "lexical")
+    assert backend.embed.call_count == (mode != "lexical")
+    assert trace["candidate_limit"] == 6 and trace["k"] == 2
+    assert len(trace["ranked_candidates"]) == 3
+    assert [r["chunk_id"] for r in trace["ranked_candidates"][:2]] == [
+        r.chunk_id for r in baseline[1]
+    ]
+    assert "stale" not in trace
+
+
+def test_candidate_capture_dedup_and_hydration_privacy(backend):
+    backend.pg.rows = [
+        chunk(1, "ok.py", content="content-canary", title="title-canary"),
+        chunk(2, "foreign-path-canary", project=OTHER_PROJECT),
+        chunk(3, "wrong-repo-canary", repo="web"),
+    ]
+    backend.vector.query_points.return_value.points = [
+        point(1, 0.9, source="source-canary"),
+        point(1, 0.1),
+        point(2),
+        point(3),
+        point(99),
+    ]
+    trace = {}
+    results = run(repo="api", limit=2, candidate_trace=trace)
+    assert len(results) == 1
+    channel = trace["channels"]["semantic"]
+    assert {k: v for k, v in channel.items() if k != "candidates"} == {
+        "raw_returned": 5,
+        "unique_returned": 4,
+        "duplicates_returned": 1,
+        "hydrated": 1,
+        "dropped": 3,
+    }
+    assert channel["candidates"][0]["score"] == 0.9
+    serialized = json.dumps(trace, allow_nan=False)
+    for secret in (
+        "content-canary",
+        "title-canary",
+        "source-canary",
+        "foreign-path-canary",
+        "wrong-repo-canary",
+        uid(2),
+        uid(3),
+        uid(99),
+    ):
+        assert secret not in serialized
+    # A later mutation cannot change the capture's copied safe metadata.
+    backend.pg.rows[0]["relative_path"] = "mutated"
+    assert channel["candidates"][0]["relative_path"] == "ok.py"
+
+
+@pytest.mark.parametrize("mode", search.SEARCH_MODES)
+@pytest.mark.parametrize("stale", [False, True])
+def test_candidate_capture_empty_and_all_dropped(backend, monkeypatch, mode, stale):
+    if stale:
+        backend.vector.query_points.return_value.points = [point(99)]
+        monkeypatch.setattr(
+            search, "lexical_candidates", lambda *a, **kw: [(uid(99), 1)]
+        )
+    trace = {"stale": True}
+    assert run(mode=mode, candidate_trace=trace) == []
+    assert trace["ranked_candidates"] == []
+    for channel in trace["channels"].values():
+        assert channel["candidates"] == []
+        assert channel["dropped"] == int(stale)
+    assert uid(99) not in json.dumps(trace)
+
+
+def test_candidate_trace_cleared_on_backend_error_and_invalid_input(backend):
+    trace = {"previous_success": True}
+    backend.vector.query_points.side_effect = RuntimeError("backend unavailable")
+    with pytest.raises(RuntimeError):
+        run(candidate_trace=trace)
+    assert trace == {}
+    backend.resolve.reset_mock()
+    with pytest.raises(ValueError):
+        run(limit=0, candidate_trace=trace)
+    backend.resolve.assert_not_called()
+    with pytest.raises(ValueError):
+        run(candidate_trace=[])
+    backend.resolve.assert_not_called()
+
+
+@pytest.mark.parametrize("score", [float("nan"), float("inf"), -float("inf")])
+def test_nonfinite_capture_fails_without_publishing_partial_success(backend, score):
+    backend.pg.rows = [chunk(1)]
+    backend.vector.query_points.return_value.points = [point(1, score)]
+    trace = {"old": True}
+    with pytest.raises(ValueError):
+        run(candidate_trace=trace)
+    assert trace == {}
 
 
 def test_compose_forwards_nondefaults_and_graph_enrichment_stays_after_ranking(

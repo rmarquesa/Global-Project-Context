@@ -323,11 +323,11 @@ gpc decision list --project product --repo api</code></pre>
             <h3 id="context-validation-title">Measure before calling it better.</h3>
             <p>PostgreSQL migration, decision lifecycle and real MCP protocol checks passed on a local OrbStack installation. Isolated indexing and watcher checks also covered vector recovery and file changes. Compare modes on your own labeled fixture: representative relevance, large-corpus SQL performance and answer correctness still need evaluation. Local checks are not production benchmarks; fewer tokens do not prove a better answer.</p>
             <a class="contextCard__link" href="https://github.com/rmarquesa/Global-Project-Context/blob/main/docs/plans/2026-11-04-orbstack-validation.md" target="_blank" rel="noreferrer">Local validation evidence and remaining limits ↗</a>
-            <a class="contextCard__link" href="https://github.com/rmarquesa/Global-Project-Context/blob/main/docs/retrieval-evaluation.md" target="_blank" rel="noreferrer">Inspect coverage and compare all three retrieval modes ↗</a>
+            <a class="contextCard__link" href="https://github.com/rmarquesa/Global-Project-Context/blob/main/docs/retrieval-evaluation.md" target="_blank" rel="noreferrer">Inspect coverage, compare modes and replay file-diversity caps ↗</a>
             <p>The current development evaluation exposes coverage and retrieval gaps; it has not demonstrated a hybrid-search quality gain. Semantic retrieval remains the default.</p>
           </div>
           <pre tabindex="0" aria-label="Compare retrieval on a project-specific evaluation fixture"><code>gpc eval-search --project gpc \
-  --fixture eval.yaml --compare-all --diagnose --json</code></pre>
+  --fixture eval.yaml --compare-all --analyze-candidates --json</code></pre>
         </aside>
       </section>
 

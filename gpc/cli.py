@@ -253,6 +253,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Read fixture-scoped PostgreSQL availability metadata.",
     )
     eval_search_parser.add_argument("--task", choices=SEARCH_TASKS, default="general")
+    eval_search_parser.add_argument(
+        "--analyze-candidates",
+        action="store_true",
+        help="Capture content-free shortlists and replay offline file-diversity caps; implies --diagnose. Does not change default retrieval.",
+    )
     eval_search_parser.set_defaults(func=cmd_eval_search)
 
     doctor_parser = subparsers.add_parser(
@@ -1119,6 +1124,19 @@ def cmd_token_savings(args: argparse.Namespace) -> int:
 def cmd_eval_search(args: argparse.Namespace) -> int:
     from gpc.search_eval import compare_search_eval, run_search_eval
 
+    def print_candidates(row: dict) -> None:
+        analysis = row.get("candidate_analysis")
+        if analysis is None:
+            return
+        pool = analysis["candidate_pool"]
+        print(
+            f"candidate_coverage hits={pool['hits']}/{pool['expected_paths']} "
+            f"total_available={pool['total_available']}"
+        )
+        for cap, summary in analysis["caps"].items():
+            print(f"offline_{cap} " + " ".join(f"{k}={v}" for k, v in summary.items()))
+        print(analysis["note"])
+
     def print_diagnostics(row: dict) -> None:
         if "diagnostics" not in row:
             return
@@ -1146,6 +1164,8 @@ def cmd_eval_search(args: argparse.Namespace) -> int:
             print(f"diagnostic_note={note}")
 
     options = {"diagnose": True} if getattr(args, "diagnose", False) else {}
+    if getattr(args, "analyze_candidates", False):
+        options.update({"diagnose": True, "analyze_candidates": True})
     compare_all = getattr(args, "compare_all", False)
     if getattr(args, "compare", False) or compare_all:
         if args.mode != "semantic":
@@ -1175,6 +1195,7 @@ def cmd_eval_search(args: argparse.Namespace) -> int:
                 )
                 print(f"{name} mode={row['mode']} {metrics}")
                 print_diagnostics(row)
+                print_candidates(row)
             print(
                 "delta "
                 + " ".join(
@@ -1225,6 +1246,7 @@ def cmd_eval_search(args: argparse.Namespace) -> int:
             )
         if options:
             print_diagnostics(report.to_dict())
+            print_candidates(report.to_dict())
     return 0
 
 
