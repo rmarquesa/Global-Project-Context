@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import sys
 from unittest.mock import Mock
 
 import pytest
@@ -100,21 +101,18 @@ def install_fixture(tmp_path, monkeypatch, found, *, cases=None, k=3):
             "same", ["main.py", "one:other.py", "absent.py", "main.py"], repo="one"
         )
     ]
-    fixture = tmp_path / "fixture.json"
-    fixture.write_text(
-        json.dumps(
-            {
-                "queries": [
-                    {
-                        "query": c.query,
-                        "expected_paths": c.expected_paths,
-                        "repo": c.repo,
-                    }
-                    for c in cases
-                ]
-            }
+    fixture = tmp_path / "fixture.yaml"
+    lines = ["queries:"]
+    for case in cases:
+        lines.append(f"  - query: {json.dumps(case.query)}")
+        lines.append(
+            "    expected_paths: " + json.dumps(case.expected_paths, ensure_ascii=False)
         )
-    )
+        if case.repo is not None:
+            lines.append(f"    repo: {json.dumps(case.repo, ensure_ascii=False)}")
+        if case.task is not None:
+            lines.append(f"    task: {json.dumps(case.task, ensure_ascii=False)}")
+    fixture.write_text("\n".join(lines) + "\n", encoding="utf-8")
     snapshot = EvalCorpusSnapshot(
         "p",
         "p",
@@ -141,9 +139,12 @@ def install_fixture(tmp_path, monkeypatch, found, *, cases=None, k=3):
     return fixture, snapshot, load, calls
 
 
+@pytest.mark.parametrize("without_pyyaml", [False, True], ids=["pyyaml", "fallback"])
 def test_analysis_implies_diagnostics_preserves_baseline_and_label_denominators(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, without_pyyaml
 ):
+    if without_pyyaml:
+        monkeypatch.setitem(sys.modules, "yaml", None)
     found = [result(i, "main.py") for i in range(3)] + [result(4, "other.py")]
     fixture, snapshot, load, calls = install_fixture(tmp_path, monkeypatch, found)
     baseline = evaluation.run_search_eval("p", fixture, k=3)
@@ -193,9 +194,12 @@ def test_analysis_implies_diagnostics_preserves_baseline_and_label_denominators(
     assert serialized.count('"candidate_analysis"') == 2  # no recursive reports
 
 
+@pytest.mark.parametrize("without_pyyaml", [False, True], ids=["pyyaml", "fallback"])
 def test_comparison_one_shared_fixture_snapshot_single_capture_per_case_and_macro_metrics(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, without_pyyaml
 ):
+    if without_pyyaml:
+        monkeypatch.setitem(sys.modules, "yaml", None)
     cases = [
         evaluation.SearchEvalCase(
             "same", ["main.py", "one:main.py", "absent.py"], repo="one"
@@ -263,7 +267,10 @@ def test_comparison_one_shared_fixture_snapshot_single_capture_per_case_and_macr
 
 
 @pytest.mark.parametrize("mode", ["semantic", "lexical", "hybrid"])
-def test_empty_candidate_analysis(tmp_path, monkeypatch, mode):
+@pytest.mark.parametrize("without_pyyaml", [False, True], ids=["pyyaml", "fallback"])
+def test_empty_candidate_analysis(tmp_path, monkeypatch, mode, without_pyyaml):
+    if without_pyyaml:
+        monkeypatch.setitem(sys.modules, "yaml", None)
     fixture, _, _, calls = install_fixture(tmp_path, monkeypatch, [])
     report = evaluation.run_search_eval(
         "p", fixture, mode=mode, analyze_candidates=True
@@ -289,7 +296,12 @@ def test_analysis_validates_k_before_fixture_snapshot_or_search(monkeypatch, k):
     load.assert_not_called()
 
 
-def test_analysis_scope_failure_before_search_or_embedding(tmp_path, monkeypatch):
+@pytest.mark.parametrize("without_pyyaml", [False, True], ids=["pyyaml", "fallback"])
+def test_analysis_scope_failure_before_search_or_embedding(
+    tmp_path, monkeypatch, without_pyyaml
+):
+    if without_pyyaml:
+        monkeypatch.setitem(sys.modules, "yaml", None)
     fixture, _, load, calls = install_fixture(tmp_path, monkeypatch, [])
     load.side_effect = ValueError("Unknown repositories")
     monkeypatch.setattr(

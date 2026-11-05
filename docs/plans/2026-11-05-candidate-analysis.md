@@ -214,3 +214,21 @@ its scoring policy and evaluate independently judged or paired-language cases,
 not tune against these twelve development judgments. AST retrieval and learned
 reranking remain unimplemented; the present evidence does not yet justify them
 as the next fix.
+
+## CI follow-up
+
+Commit `ec4b818` passed remote integration and site deployment, but six new unit
+tests failed on the minimal CI installation. Their local test helper emitted a
+JSON document that optional PyYAML accepted; without PyYAML, the documented
+fallback parser correctly rejected that format. Local validation had PyYAML
+installed, so it missed this accidental test dependency.
+
+The correction uses supported block-YAML test fixtures and explicitly exercises
+the no-PyYAML path. It does not broaden the production parser, add a dependency,
+change ranking or invalidate the completed isolated runtime measurements.
+
+Corrective full-suite checks passed with service endpoints disabled:
+**787 passed, four integration tests deselected** with PyYAML available;
+**781 passed, six PyYAML-only cases skipped, four integration tests deselected**
+with its import explicitly blocked. Ruff and Black passed the changed test file.
+No production code changed or live corpus was reindexed for this correction.
